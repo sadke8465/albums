@@ -31,35 +31,38 @@
             align-items: center;
         }
 
-        /* Ambient Background */
+        /* Ambient Background Wrapper */
         #ambient-bg {
             position: absolute;
             top: -10%;
             left: -10%;
             width: 120%;
             height: 120%;
+            z-index: -1;
+            /* Container scales */
+            transform: scale(1.1);
+        }
+
+        /* Background Layers */
+        .bg-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
             background-size: cover;
             background-position: center;
-            filter: blur(80px) brightness(0.9);
-            z-index: -1;
-            /* We need to transition opacity for hiding via zoom AND for album change.
-               We can use comma separated transitions if needed, but here simple opacity is fine.
-               User wants "curved fading animation". */
+            filter: blur(80px) brightness(0.7);
+            opacity: 0;
             transition: opacity var(--fade-speed) var(--fade-curve);
-            transform: scale(1.1);
-            opacity: 1;
             will-change: opacity;
-            /* GPU Hint */
         }
 
         #ambient-bg.hidden {
+            /* Hide the whole container during zoom out if needed, 
+                but logic says we only hide bg when zoomed IN. */
             opacity: 0;
             transition: opacity var(--transition-speed) var(--zoom-curve);
-            /* Use zoom speed when hiding for zoom */
-        }
-
-        #ambient-bg.fade-out {
-            opacity: 0;
         }
 
         /* Container */
@@ -83,7 +86,10 @@
             transform-origin: center center;
             transition: transform var(--transition-speed) var(--zoom-curve), border-radius var(--transition-speed) var(--zoom-curve);
             will-change: transform, border-radius;
-            /* GPU Hint */
+            /* Relative positioning for children absolute */
+            position: relative;
+            background: #000;
+            /* Fallback for transparency */
         }
 
         /* Zoom States */
@@ -117,19 +123,17 @@
             border-radius: 0;
         }
 
-        #album-art {
+        .art-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
             width: 100%;
             height: 100%;
             object-fit: cover;
             border-radius: inherit;
-            opacity: 1;
+            opacity: 0;
             transition: opacity var(--fade-speed) var(--fade-curve);
             will-change: opacity;
-            /* GPU Hint */
-        }
-
-        #album-art.fade-out {
-            opacity: 0;
         }
 
         /* Loading State */
@@ -195,11 +199,15 @@
         <span class="loader"></span>
     </div>
 
-    <div id="ambient-bg"></div>
+    <div id="ambient-bg">
+        <div id="bg-layer-0" class="bg-layer"></div>
+        <div id="bg-layer-1" class="bg-layer"></div>
+    </div>
 
     <div class="container">
         <div class="album-art-wrapper">
-            <img id="album-art" src="" alt="Album Art">
+            <img id="art-layer-0" class="art-layer" src="" alt="Album Art">
+            <img id="art-layer-1" class="art-layer" src="" alt="Album Art">
         </div>
     </div>
 
@@ -216,11 +224,29 @@
         let zoomState = 0; // 0: Default, 1: TL, 2: TR, 3: BR, 4: BL
 
         const els = {
-            bg: document.getElementById('ambient-bg'),
-            art: document.getElementById('album-art'),
+            bgWrapper: document.getElementById('ambient-bg'),
+            bgLayers: [
+                document.getElementById('bg-layer-0'),
+                document.getElementById('bg-layer-1')
+            ],
             wrapper: document.querySelector('.album-art-wrapper'),
+            artLayers: [
+                document.getElementById('art-layer-0'),
+                document.getElementById('art-layer-1')
+            ],
             loading: document.getElementById('loading-screen')
         };
+
+        // State for Dual Buffering
+        let activeLayerIndex = 0; // The layer currently visible (opacity 1)
+
+        // Init: Ensure layer 0 is top
+        if (els.bgLayers[0] && els.artLayers[0]) {
+            els.bgLayers[0].style.zIndex = 2;
+            els.bgLayers[1].style.zIndex = 1;
+            els.artLayers[0].style.zIndex = 2;
+            els.artLayers[1].style.zIndex = 1;
+        }
 
         // Zoom Logic
         // Automatically advance. 
@@ -241,30 +267,36 @@
         // Start the loop
         scheduleNextZoom();
 
+        document.addEventListener('keydown', (e) => {
+            if (e.key.toLowerCase() === 'k') {
+                zoomState = (zoomState + 1) % 5;
+                applyZoomState(zoomState);
+            }
+        });
+
         function applyZoomState(state) {
             // Remove all zoom classes
             els.wrapper.classList.remove('zoom-tl', 'zoom-tr', 'zoom-br', 'zoom-bl');
-            els.bg.classList.remove('hidden');
+            els.bgWrapper.classList.remove('hidden');
 
             switch (state) {
                 case 0:
-                    // Default logic handles this (removal of classes)
                     break;
                 case 1:
                     els.wrapper.classList.add('zoom-tl');
-                    els.bg.classList.add('hidden');
+                    els.bgWrapper.classList.add('hidden');
                     break;
                 case 2:
                     els.wrapper.classList.add('zoom-tr');
-                    els.bg.classList.add('hidden');
+                    els.bgWrapper.classList.add('hidden');
                     break;
                 case 3:
                     els.wrapper.classList.add('zoom-br');
-                    els.bg.classList.add('hidden');
+                    els.bgWrapper.classList.add('hidden');
                     break;
                 case 4:
                     els.wrapper.classList.add('zoom-bl');
-                    els.bg.classList.add('hidden');
+                    els.bgWrapper.classList.add('hidden');
                     break;
             }
         }
@@ -329,53 +361,32 @@
 
         async function fetchItunesArtwork(artist, track, lastFmAlbum) {
 
-            const regions = ['US', 'IL', 'GB'];
-
             // Helper to execute search and filter
-            const executeSearch = async (term, entity, country) => {
+            const executeSearch = async (term, entity) => {
                 try {
-                    const itunesUrl = `https://itunes.apple.com/search?term=${term}&media=music&entity=${entity}&limit=25&country=${country}`;
+                    const itunesUrl = `https://itunes.apple.com/search?term=${term}&media=music&entity=${entity}&limit=25`;
                     const response = await fetch(itunesUrl);
                     const data = await response.json();
 
                     if (!data.results || data.results.length === 0) return null;
                     return filterItunesResults(data.results, artist, lastFmAlbum);
                 } catch (e) {
-                    console.warn(`iTunes search failed for ${entity} in ${country}`, e);
+                    console.warn(`iTunes search failed for ${entity}`, e);
                     return null;
                 }
             };
 
-            // Clean Query Helper
-            const cleanQuery = (str) => {
-                return str.replace(/\s*\(.*?\)\s*/g, '') // Remove (Text)
-                    .replace(/\b(deluxe|remastered|expanded|anniversary|edition|version)\b/gi, '') // Remove keywords
-                    .replace(/\s+/g, ' ')
-                    .trim();
-            };
-
             // Strategy 1: Search by Album (Preferred)
             if (lastFmAlbum) {
-                // Use cleaned album name for better hit rate
-                const cleanAlbum = cleanQuery(lastFmAlbum);
-                const query = encodeURIComponent(`${artist} ${cleanAlbum}`);
-
-                for (const region of regions) {
-                    const result = await executeSearch(query, 'album', region);
-                    if (result) return result;
-                }
-                console.log("Album search failed in all regions, falling back to track search...");
+                const query = encodeURIComponent(`${artist} ${lastFmAlbum}`);
+                const result = await executeSearch(query, 'album');
+                if (result) return result;
+                console.log("Album search failed, falling back to track search...");
             }
 
             // Strategy 2: Search by Track (Fallback)
             const query = encodeURIComponent(`${artist} ${track}`);
-
-            for (const region of regions) {
-                const result = await executeSearch(query, 'song', region);
-                if (result) return result;
-            }
-
-            return null;
+            return await executeSearch(query, 'song');
         }
 
         function filterItunesResults(results, targetArtistName, targetAlbumName) {
@@ -402,7 +413,7 @@
             // Best match candidates
             let exactMatch = null;
             let softMatch = null;
-            let validResults = [];
+            let validResults = []; // For partial matches and general candidates
 
             for (const result of results) {
                 if (!result.artworkUrl100) continue;
@@ -429,31 +440,27 @@
                 // 3. Soft Filter
                 const isSoft = softKeywords.some(kw => resAlbum.includes(kw));
                 if (targetAlbum && !targetAlbum.includes(resAlbum) && isSoft) {
-                    if (!softMatch) softMatch = result;
+                    if (!softMatch) softMatch = result; // Keep first acceptable soft match
                     continue;
                 }
 
+                // If not an exact match and passed hard/soft filters, add to valid candidates
                 validResults.push(result);
             }
 
             let finalResult = exactMatch;
 
             if (!finalResult) {
-                // Fuzzy Match Loop: Bidirectional includes check
-                // "Album" in "Album (Deluxe)" OR "Album (Deluxe)" in "Album" (unlikely but safe)
-                const partialMatch = validResults.find(res => {
-                    const normRes = normalize(res.collectionName);
-                    return normRes.includes(targetAlbum) || targetAlbum.includes(normRes);
-                });
+                // Try to find a partial match in validResults
+                const partialMatch = validResults.find(res => normalize(res.collectionName).includes(targetAlbum));
 
                 if (partialMatch) {
                     finalResult = partialMatch;
                 } else if (validResults.length > 0) {
-                    // If we have results and no hard violations, take first one?
-                    // Strictness: Maybe only if we verified artist? Yes we did.
-                    // Last resort fallback
+                    // If we have results that aren't "Greatest Hits" and aren't "Deluxe", use first one
                     finalResult = validResults[0];
                 } else if (softMatch) {
+                    // If we only found a "Deluxe" version and we have no other options, USE IT.
                     finalResult = softMatch;
                 }
             }
@@ -471,41 +478,69 @@
                 els.loading.classList.add('hidden');
             }
 
-            // Only update if image actually changed (redundant check but safe)
+            // Only update if image actually changed
             if (img !== CACHE.image) {
-
                 CACHE.image = img;
 
-                // Fade Out
-                els.art.classList.add('fade-out');
+                // Identify layers
+                const currentIdx = activeLayerIndex;
+                const nextIdx = (activeLayerIndex + 1) % 2;
 
-                // Only fade BG if it's currently visible (not in zoom mode)
-                els.bg.classList.add('fade-out');
+                const nextBg = els.bgLayers[nextIdx];
+                const currentBg = els.bgLayers[currentIdx];
 
-                // Wait for fade out
-                setTimeout(() => {
-                    // Update Sources
-                    const tempImg = new Image();
-                    tempImg.src = img;
+                const nextArt = els.artLayers[nextIdx];
+                const currentArt = els.artLayers[currentIdx];
 
-                    tempImg.onload = () => {
-                        els.art.src = img;
-                        els.bg.style.backgroundImage = `url('${img}')`;
+                // Preload Image
+                const tempImg = new Image();
+                tempImg.src = img;
 
-                        // Force reflow/repaint
-                        void els.art.offsetWidth;
+                tempImg.onload = () => {
+                    // 1. Prepare Next Layer (Hidden, but above current)
+                    // We want Next to fade IN over current.
+                    // Current is z-index 1 (or 2). Next should be z-index 3.
+                    // Actually, let's keep it simple.
+                    // Current is visible. Next is hidden.
+                    // Move Next to Top (zIndex 2). Current at Bottom (zIndex 1).
 
-                        // Fade In
-                        els.art.classList.remove('fade-out');
-                        els.art.classList.add('loaded'); // Ensure loaded class is present if used
+                    nextBg.style.backgroundImage = `url('${img}')`;
+                    nextArt.src = img;
 
-                        els.bg.classList.remove('fade-out');
+                    // Ensure opacity starts at 0
+                    nextBg.style.opacity = 0;
+                    nextArt.style.opacity = 0;
 
-                        // Garbage Collection Help
+                    // Move to Top
+                    nextBg.style.zIndex = 2;
+                    nextArt.style.zIndex = 2;
+
+                    // Move Current to Bottom (but still visible 100% opacity)
+                    currentBg.style.zIndex = 1;
+                    currentArt.style.zIndex = 1;
+
+                    // Force reflow
+                    void nextArt.offsetWidth;
+
+                    // 2. Fade In Next Layer
+                    nextBg.style.opacity = 1;
+                    nextArt.style.opacity = 1;
+
+                    // 3. Update State
+                    activeLayerIndex = nextIdx;
+
+                    // 4. Cleanup Old Layer after transition
+                    // Wait for transition duration (fade-speed varies but let's assume 1s or read var)
+                    // --fade-speed default is 1s? Let's give it 1.2s to be safe.
+                    setTimeout(() => {
+                        currentBg.style.opacity = 0;
+                        currentArt.style.opacity = 0;
+
+                        // Garbage Collection on temp
                         tempImg.onload = null;
                         tempImg.src = '';
-                    };
-                }, 1500);
+                    }, 1500);
+                };
             }
         }
 
