@@ -95,27 +95,27 @@
         /* Zoom States */
         /* 
            Logic: Align Album Corner to Screen Corner exactly.
-           Scale reduced to 1.8 (Requested "A bit less zoom").
-           Half Scaled Width = 85vmin * 1.8 / 2 = 76.5vmin
+           Variables --zoom-x and --zoom-y are calculated in JS.
            
-           TL: Move Right/Down to bring TL corner to 0,0
-           TranslateX = 76.5vmin - 50vw
-           TranslateY = 76.5vmin - 50vh
+           TL: Move Right/Down (+x, +y)
+           TR: Move Left/Down (-x, +y)
+           BR: Move Left/Up (-x, -y)
+           BL: Move Right/Up (+x, -y)
         */
         .album-art-wrapper.zoom-tl {
-            transform: translate(calc(76.5vmin - 50vw), calc(76.5vmin - 50vh)) scale(1.8);
+            transform: translate(var(--zoom-x), var(--zoom-y)) scale(1.8);
         }
 
         .album-art-wrapper.zoom-tr {
-            transform: translate(calc(50vw - 76.5vmin), calc(76.5vmin - 50vh)) scale(1.8);
+            transform: translate(calc(var(--zoom-x) * -1), var(--zoom-y)) scale(1.8);
         }
 
         .album-art-wrapper.zoom-br {
-            transform: translate(calc(50vw - 76.5vmin), calc(50vh - 76.5vmin)) scale(1.8);
+            transform: translate(calc(var(--zoom-x) * -1), calc(var(--zoom-y) * -1)) scale(1.8);
         }
 
         .album-art-wrapper.zoom-bl {
-            transform: translate(calc(76.5vmin - 50vw), calc(50vh - 76.5vmin)) scale(1.8);
+            transform: translate(var(--zoom-x), calc(var(--zoom-y) * -1)) scale(1.8);
         }
 
         /* Remove radius when zoomed to look like full bleed image */
@@ -252,6 +252,35 @@
         // Automatically advance. 
         // Logic: 12s for quadrants (states 1-4), 36s for full album (state 0).
 
+        // CSS Variables for Zoom
+        function updateZoomCalculations() {
+            const viewportW = window.innerWidth;
+            const viewportH = window.innerHeight;
+
+            // Element size is 85vmin.
+            const size = Math.min(viewportW, viewportH) * 0.85;
+            const scale = 1.8;
+
+            const scaledSize = size * scale;
+            const halfScaledSize = scaledSize / 2;
+
+            const halfViewportW = viewportW / 2;
+            const halfViewportH = viewportH / 2;
+
+            // Calculate offsets to move corner to corner
+            // dx to align Left Edge to Left Edge: halfScaledSize - halfViewportW
+            const dx = halfScaledSize - halfViewportW;
+            const dy = halfScaledSize - halfViewportH;
+
+            document.documentElement.style.setProperty('--zoom-x', `${dx}px`);
+            document.documentElement.style.setProperty('--zoom-y', `${dy}px`);
+        }
+
+        window.addEventListener('resize', updateZoomCalculations);
+        // Also call on load
+        updateZoomCalculations();
+
+
         function scheduleNextZoom() {
             // Determine how long to stay in the CURRENT state before moving to next
             // If current is 0, stay 36s. Else stay 12s.
@@ -278,6 +307,9 @@
             // Remove all zoom classes
             els.wrapper.classList.remove('zoom-tl', 'zoom-tr', 'zoom-br', 'zoom-bl');
             els.bgWrapper.classList.remove('hidden');
+
+            // Recalculate just in case (e.g. mobile orientation change)
+            updateZoomCalculations();
 
             switch (state) {
                 case 0:
