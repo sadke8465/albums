@@ -361,6 +361,19 @@
 
         async function fetchItunesArtwork(artist, track, lastFmAlbum) {
 
+            // Helper to clean query strings (Musicbrainz/Last.fm often have junk)
+            const cleanQuery = (str) => {
+                if (!str) return '';
+                return str
+                    .replace(/\s*\(.*?\)\s*/g, '') // Remove (...)
+                    .replace(/\s*\[.*?\]\s*/g, '') // Remove [...]
+                    .replace(/ - .*/, '') // Remove " - Remastered" etc
+                    .replace(/Remastered/i, '')
+                    .replace(/Deluxe/i, '')
+                    .replace(/Edition/i, '')
+                    .trim();
+            };
+
             // Helper to execute search and filter
             const executeSearch = async (term, entity) => {
                 try {
@@ -378,9 +391,13 @@
 
             // Strategy 1: Search by Album (Preferred)
             if (lastFmAlbum) {
-                const query = encodeURIComponent(`${artist} ${lastFmAlbum}`);
+                // Search with CLEANED album name first for better hit rate
+                const cleanedAlbum = cleanQuery(lastFmAlbum);
+                const query = encodeURIComponent(`${artist} ${cleanedAlbum}`);
                 const result = await executeSearch(query, 'album');
                 if (result) return result;
+
+                // If cleaned failed, maybe try raw? No, raw usually fails if cleaned failed.
                 console.log("Album search failed, falling back to track search...");
             }
 
