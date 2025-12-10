@@ -269,8 +269,8 @@
             }
         }
 
-        // Fallback image (dark gradient)
-        const placeholderImg = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+        // Fallback image (Dark Gray 1x1 Pixel) to avoid pure black screen if everything fails
+        const placeholderImg = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 
         async function fetchTrack() {
             try {
@@ -286,9 +286,10 @@
                 const trackName = track.name;
                 const artistName = track.artist['#text'];
                 const albumName = track.album ? track.album['#text'] : '';
+                const mbid = track.album ? track.album.mbid : null; // MusicBrainz ID
 
                 // create unique ID for cache
-                const trackId = `${artistName}-${trackName}-${albumName}`; // Include album in cache key
+                const trackId = `${artistName}-${trackName}-${albumName}`;
 
                 // 2. Check Cache
                 if (trackId === CACHE.id) {
@@ -298,12 +299,25 @@
                 CACHE.id = trackId;
 
                 // 3. Fetch from iTunes for IMAGE ONLY
-                const imageUrl = await fetchItunesArtwork(artistName, trackName, albumName);
+                let imageUrl = await fetchItunesArtwork(artistName, trackName, albumName);
+
+                // 4. Fallback: MusicBrainz (Cover Art Archive)
+                if (!imageUrl && mbid) {
+                    try {
+                        const mbUrl = `https://coverartarchive.org/release/${mbid}/front`;
+                        const mbTest = await fetch(mbUrl, { method: 'HEAD' });
+                        if (mbTest.ok) {
+                            imageUrl = mbUrl;
+                        }
+                    } catch (e) {
+                        console.warn('MusicBrainz fetch failed', e);
+                    }
+                }
 
                 if (imageUrl) {
                     updateUI(imageUrl);
                 } else {
-                    // Fallback local gradient if iTunes fails
+                    // Fallback local gradient if everything fails
                     updateUI(placeholderImg);
                 }
 
@@ -338,13 +352,19 @@
                 const targetAlbum = normalize(lastFmAlbum);
                 const targetArtist = normalize(artist);
 
-                // Keywords to avoid unless target album has them
-                const badKeywords = ['greatest', 'bestof', 'hits', 'collection', 'anthology', 'essentials', 'deluxe', 'expanded', 'remastered', 'anniversary', 'single', 'ep'];
-                const targetHasBadKeyword = badKeywords.some(kw => targetAlbum.includes(kw));
+                // 1. HARD Filters (Reject these ALWAYS unless target matches them)
+                const hardKeywords = ['greatest', 'bestof', 'hits', 'collection', 'anthology', 'essentials'];
+
+                // 2. SOFT Filters (Prefer standard, but accept these if needed)
+                const softKeywords = ['deluxe', 'expanded', 'remastered', 'anniversary', 'edition'];
+
+                const targetHasHard = hardKeywords.some(kw => targetAlbum.includes(kw));
+                // const targetHasSoft = softKeywords.some(kw => targetAlbum.includes(kw)); // Unused, we use logic below.
 
                 // Filter Loop
                 let validResults = [];
                 let exactMatch = null;
+                let softMatch = null; // Matches that failed soft filter but passed hard filter
 
                 for (const result of data.results) {
                     if (!result.artworkUrl100) continue;
@@ -359,13 +379,23 @@
                     // 1. Check for Exact Album Match
                     if (resAlbum === targetAlbum) {
                         exactMatch = result;
-                        break; // Stop if exact match found (Best Method)
+                        break;
                     }
 
-                    // 2. Filter out compilations/best-ofs unless user asked for them
-                    if (!targetHasBadKeyword) {
-                        const isBad = badKeywords.some(kw => resAlbum.includes(kw));
-                        if (isBad) continue; // Skip this result
+                    // 2. Hard Filter: If target doesn't have "Greatest", reject "Greatest"
+                    if (!targetHasHard) {
+                        const isHard = hardKeywords.some(kw => resAlbum.includes(kw));
+                        if (isHard) continue; // Hard Reject
+                    }
+
+                    // 3. Soft Filter
+                    const isSoft = softKeywords.some(kw => resAlbum.includes(kw));
+                    if (!targetAlbum.includes(resAlbum) && isSoft) {
+                        // It has a soft keyword (Deluxe) that target doesn't. 
+                        // Store it as a fallback, but don't add to main 'validResults' which implies strict adherence?
+                        // Or add to validResults but we prioritize exactMatch.
+                        if (!softMatch) softMatch = result; // Keep the first acceptable soft match
+                        continue; // Don't treat as "primary" valid candidate yet
                     }
 
                     validResults.push(result);
@@ -375,22 +405,21 @@
                 let finalResult = exactMatch;
 
                 if (!finalResult) {
-                    // Fallback to first valid result IF it contains the album name partially?
-                    // Or strictly fail if no exact match?
-                    // User said "Make tweaks to make sure i see EXACTLY the same album art... No variants".
-                    // This implies we should be VERY strict.
-                    // If we have validResults (that passed invalid keyword filter), we can check if they contain the target album name.
-
+                    // Try to find a partial match in validResults
+                    // e.g. Target: "Album" | Res: "The Album" (normalized to "album") -> caught by exactMatch
+                    // e.g. Target: "Album" | Res: "Album [UK Version]" -> validResult
                     const partialMatch = validResults.find(res => normalize(res.collectionName).includes(targetAlbum));
+
                     if (partialMatch) {
                         finalResult = partialMatch;
+                    } else if (validResults.length > 0) {
+                        // If we have results that aren't "Greatest Hits" and aren't "Deluxe", use first one?
+                        finalResult = validResults[0];
+                    } else if (softMatch) {
+                        // If we only found a "Deluxe" version and we have no other options, USE IT.
+                        // This prevents the black screen for "Deluxe Only" albums.
+                        finalResult = softMatch;
                     }
-                    // Else: we have valid results (same artist, track, passed keyword filter) but album name doesn't match target.
-                    // e.g. "Album X" vs "Album X (Deluxe)" -> filtered out.
-                    // e.g. "Album X" vs "Album Y".
-                    // If we are strict, we return null.
-
-                    // Let's rely on exactMatch or specific partial match for safety.
                 }
 
                 if (finalResult && finalResult.artworkUrl100) {
