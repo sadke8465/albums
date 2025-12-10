@@ -329,18 +329,19 @@
 
         async function fetchItunesArtwork(artist, track, lastFmAlbum) {
 
+            const regions = ['US', 'IL', 'GB'];
+
             // Helper to execute search and filter
-            const executeSearch = async (term, entity) => {
+            const executeSearch = async (term, entity, country) => {
                 try {
-                    // Added &country=us
-                    const itunesUrl = `https://itunes.apple.com/search?term=${term}&media=music&entity=${entity}&limit=25&country=us`;
+                    const itunesUrl = `https://itunes.apple.com/search?term=${term}&media=music&entity=${entity}&limit=25&country=${country}`;
                     const response = await fetch(itunesUrl);
                     const data = await response.json();
 
                     if (!data.results || data.results.length === 0) return null;
                     return filterItunesResults(data.results, artist, lastFmAlbum);
                 } catch (e) {
-                    console.warn(`iTunes search failed for ${entity}`, e);
+                    console.warn(`iTunes search failed for ${entity} in ${country}`, e);
                     return null;
                 }
             };
@@ -358,14 +359,23 @@
                 // Use cleaned album name for better hit rate
                 const cleanAlbum = cleanQuery(lastFmAlbum);
                 const query = encodeURIComponent(`${artist} ${cleanAlbum}`);
-                const result = await executeSearch(query, 'album');
-                if (result) return result;
-                console.log("Album search failed, falling back to track search...");
+
+                for (const region of regions) {
+                    const result = await executeSearch(query, 'album', region);
+                    if (result) return result;
+                }
+                console.log("Album search failed in all regions, falling back to track search...");
             }
 
             // Strategy 2: Search by Track (Fallback)
             const query = encodeURIComponent(`${artist} ${track}`);
-            return await executeSearch(query, 'song');
+
+            for (const region of regions) {
+                const result = await executeSearch(query, 'song', region);
+                if (result) return result;
+            }
+
+            return null;
         }
 
         function filterItunesResults(results, targetArtistName, targetAlbumName) {
