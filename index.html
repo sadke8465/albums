@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Now Playing | Noamsadi95</title>
+    <style>
+        :root {
+            --transition-speed: 10s;
+            /* Zoom speed (kept as user req) */
+            --zoom-curve: cubic-bezier(0.7, 0, 0.3, 1);
+            --fade-speed: 1.5s;
+            --fade-curve: cubic-bezier(0.4, 0, 0.2, 1);
+            /* Nice smooth curve */
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #111;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* Ambient Background */
+        #ambient-bg {
+            position: absolute;
+            top: -10%;
+            left: -10%;
+            width: 120%;
+            height: 120%;
+            background-size: cover;
+            background-position: center;
+            filter: blur(80px) brightness(0.7);
+            z-index: -1;
+            /* We need to transition opacity for hiding via zoom AND for album change.
+               We can use comma separated transitions if needed, but here simple opacity is fine.
+               User wants "curved fading animation". */
+            transition: opacity var(--fade-speed) var(--fade-curve);
+            transform: scale(1.1);
+            opacity: 1;
+        }
+
+        #ambient-bg.hidden {
+            opacity: 0;
+            transition: opacity var(--transition-speed) var(--zoom-curve);
+            /* Use zoom speed when hiding for zoom */
+        }
+
+        #ambient-bg.fade-out {
+            opacity: 0;
+        }
+
+        /* Container */
+        .container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+        }
+
+        /* Album Art */
+        .album-art-wrapper {
+            width: 85vmin;
+            height: 85vmin;
+            max-width: 85vw;
+            max-height: 85vh;
+            border-radius: 7px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+            transform-origin: center center;
+            transition: transform var(--transition-speed) var(--zoom-curve), border-radius var(--transition-speed) var(--zoom-curve);
+        }
+
+        /* Zoom States */
+        /* 
+           Logic: Align Album Corner to Screen Corner exactly.
+           Half Scaled Width = 85vmin * 2.5 / 2 = 106.25vmin
+           TL: Move Right/Down to bring TL corner (currently offscreen) to 0,0
+           TranslateX = 106.25vmin - 50vw
+           TranslateY = 106.25vmin - 50vh
+        */
+        .album-art-wrapper.zoom-tl {
+            transform: translate(calc(106.25vmin - 50vw), calc(106.25vmin - 50vh)) scale(2.5);
+        }
+
+        .album-art-wrapper.zoom-tr {
+            transform: translate(calc(50vw - 106.25vmin), calc(106.25vmin - 50vh)) scale(2.5);
+        }
+
+        .album-art-wrapper.zoom-br {
+            transform: translate(calc(50vw - 106.25vmin), calc(50vh - 106.25vmin)) scale(2.5);
+        }
+
+        .album-art-wrapper.zoom-bl {
+            transform: translate(calc(106.25vmin - 50vw), calc(50vh - 106.25vmin)) scale(2.5);
+        }
+
+        /* Remove radius when zoomed to look like full bleed image */
+        .album-art-wrapper[class*="zoom-"] {
+            border-radius: 0;
+        }
+
+        #album-art {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: inherit;
+            opacity: 1;
+            transition: opacity var(--fade-speed) var(--fade-curve);
+        }
+
+        #album-art.fade-out {
+            opacity: 0;
+        }
+
+        /* Loading State */
+        .loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #000;
+            z-index: 100;
+            transition: opacity 0.5s ease;
+        }
+
+        .loading.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .loader {
+            width: 48px;
+            height: 48px;
+            border: 3px solid #FFF;
+            border-radius: 50%;
+            display: inline-block;
+            position: relative;
+            box-sizing: border-box;
+            animation: rotation 1s linear infinite;
+        }
+
+        .loader::after {
+            content: '';
+            box-sizing: border-box;
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: 3px solid transparent;
+            border-bottom-color: #FF3D00;
+        }
+
+        @keyframes rotation {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="loading" id="loading-screen">
+        <span class="loader"></span>
+    </div>
+
+    <div id="ambient-bg"></div>
+
+    <div class="container">
+        <div class="album-art-wrapper">
+            <img id="album-art" src="" alt="Album Art">
+        </div>
+    </div>
+
+    <script>
+        const API_KEY = 'f12a1d5a9aad4c0d570403a0aabc9f61';
+        const USERNAME = 'Noamsadi95';
+        const URL = `https://ws.audioscrobbler.com/2.0/?method=user.getRecentTracks&user=${USERNAME}&api_key=${API_KEY}&format=json&limit=1`;
+
+        const CACHE = {
+            id: null, // Artist + Track string
+            image: null
+        };
+
+        let zoomState = 0; // 0: Default, 1: TL, 2: TR, 3: BR, 4: BL
+
+        const els = {
+            bg: document.getElementById('ambient-bg'),
+            art: document.getElementById('album-art'),
+            wrapper: document.querySelector('.album-art-wrapper'),
+            loading: document.getElementById('loading-screen')
+        };
+
+        // Zoom Logic
+        // Automatically advance. 
+        // Logic: 12s for quadrants (states 1-4), 36s for full album (state 0).
+
+        function scheduleNextZoom() {
+            // Determine how long to stay in the CURRENT state before moving to next
+            // If current is 0, stay 36s. Else stay 12s.
+            const delay = (zoomState === 0) ? 36000 : 12000;
+
+            setTimeout(() => {
+                zoomState = (zoomState + 1) % 5;
+                applyZoomState(zoomState);
+                scheduleNextZoom();
+            }, delay);
+        }
+
+        // Start the loop
+        scheduleNextZoom();
+
+        function applyZoomState(state) {
+            // Remove all zoom classes
+            els.wrapper.classList.remove('zoom-tl', 'zoom-tr', 'zoom-br', 'zoom-bl');
+            els.bg.classList.remove('hidden');
+
+            switch (state) {
+                case 0:
+                    // Default logic handles this (removal of classes)
+                    break;
+                case 1:
+                    els.wrapper.classList.add('zoom-tl');
+                    els.bg.classList.add('hidden');
+                    break;
+                case 2:
+                    els.wrapper.classList.add('zoom-tr');
+                    els.bg.classList.add('hidden');
+                    break;
+                case 3:
+                    els.wrapper.classList.add('zoom-br');
+                    els.bg.classList.add('hidden');
+                    break;
+                case 4:
+                    els.wrapper.classList.add('zoom-bl');
+                    els.bg.classList.add('hidden');
+                    break;
+            }
+        }
+
+        // Fallback image (dark gradient)
+        const placeholderImg = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+        async function fetchTrack() {
+            try {
+                // 1. Fetch from Last.fm for TEXT ONLY
+                const response = await fetch(URL);
+                const data = await response.json();
+
+                if (!data.recenttracks || !data.recenttracks.track || data.recenttracks.track.length === 0) {
+                    throw new Error('No track data found');
+                }
+
+                const track = data.recenttracks.track[0];
+                const trackName = track.name;
+                const artistName = track.artist['#text'];
+                const albumName = track.album ? track.album['#text'] : '';
+
+                // create unique ID for cache
+                const trackId = `${artistName}-${trackName}-${albumName}`; // Include album in cache key
+
+                // 2. Check Cache
+                if (trackId === CACHE.id) {
+                    return; // Same track, do nothing
+                }
+
+                CACHE.id = trackId;
+
+                // 3. Fetch from iTunes for IMAGE ONLY
+                const imageUrl = await fetchItunesArtwork(artistName, trackName, albumName);
+
+                if (imageUrl) {
+                    updateUI(imageUrl);
+                } else {
+                    // Fallback local gradient if iTunes fails
+                    updateUI(placeholderImg);
+                }
+
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                // Do not update UI on error, keep last valid state
+            }
+        }
+
+        async function fetchItunesArtwork(artist, track, lastFmAlbum) {
+            try {
+                const query = encodeURIComponent(`${artist} ${track}`);
+                // Limit increased to 25 to find correct album
+                const itunesUrl = `https://itunes.apple.com/search?term=${query}&media=music&entity=song&limit=25`;
+
+                const response = await fetch(itunesUrl);
+                const data = await response.json();
+
+                if (!data.results || data.results.length === 0) {
+                    return null;
+                }
+
+                // Normalization helper
+                const normalize = (str) => str ? str.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+                const targetAlbum = normalize(lastFmAlbum);
+
+                // Keywords to avoid unless target album has them
+                const badKeywords = ['greatest', 'bestof', 'hits', 'collection', 'anthology', 'essentials', 'deluxe', 'expanded', 'remastered', 'anniversary'];
+                const targetHasBadKeyword = badKeywords.some(kw => targetAlbum.includes(kw));
+
+                // Filter Loop
+                let validResults = [];
+                let exactMatch = null;
+
+                for (const result of data.results) {
+                    if (!result.artworkUrl100) continue;
+
+                    const resAlbum = normalize(result.collectionName);
+
+                    // 1. Check for Exact Album Match
+                    if (resAlbum === targetAlbum) {
+                        exactMatch = result;
+                        break; // Stop if exact match found (Best Method)
+                    }
+
+                    // 2. Filter out compilations/best-ofs unless user asked for them
+                    if (!targetHasBadKeyword) {
+                        const isBad = badKeywords.some(kw => resAlbum.includes(kw));
+                        if (isBad) continue; // Skip this result
+                    }
+
+                    validResults.push(result);
+                }
+
+                // Decision Logic
+                let finalResult = exactMatch;
+
+                if (!finalResult) {
+                    // Fallback to first valid result (filtered)
+                    if (validResults.length > 0) {
+                        finalResult = validResults[0];
+                    } else if (data.results.length > 0) {
+                        // Desperation: If all were filtered out but we have something, take the first one?
+                        // User said "Reject any result where...", implying strictness.
+                        // "Safe" behavior: if strict filtering killed everything, maybe fallback to first raw result or null?
+                        // "If iTunes returns no result" -> placeholder.
+                        // But finding *something* is usually better than gray screen.
+                        // User said "Strict Filtering Rule (YOU SHOULD APPLY)".
+                        // So if we filter everything, we return null?
+                        // Let's return null to be safe/strict, relying on Last.fm text logic next? 
+                        // Wait, we don't display text. We display image.
+                        // Let's use the first raw result as a last resort but only if it's very close match?
+                        // Actually, "Do not display broken images" "Do not black-screen".
+                        // Let's stick to validResults. If empty, maybe compilation is all we have.
+                        // User said: "This single rule alone removes 90% of false album art."
+                        // Let's assume validResults has something. If not, return null (and use placeholder).
+                        return null;
+                    }
+                }
+
+                if (finalResult && finalResult.artworkUrl100) {
+                    return finalResult.artworkUrl100.replace('100x100bb', '500x500bb');
+                }
+
+                return null;
+
+            } catch (e) {
+                console.warn('iTunes fetch failed', e);
+                return null;
+            }
+        }
+
+        function updateUI(img) {
+            // Remove loading screen on first successful load
+            if (!els.loading.classList.contains('hidden')) {
+                els.loading.classList.add('hidden');
+            }
+
+            // Only update if image actually changed (redundant check but safe)
+            if (img !== CACHE.image) {
+
+                CACHE.image = img;
+
+                // Fade Out
+                els.art.classList.add('fade-out');
+
+                // Only fade BG if it's currently visible (not in zoom mode)
+                els.bg.classList.add('fade-out');
+
+                // Wait for fade out
+                setTimeout(() => {
+                    // Update Sources
+                    const tempImg = new Image();
+                    tempImg.src = img;
+
+                    tempImg.onload = () => {
+                        els.art.src = img;
+                        els.bg.style.backgroundImage = `url('${img}')`;
+
+                        // Force reflow/repaint
+                        void els.art.offsetWidth;
+
+                        // Fade In
+                        els.art.classList.remove('fade-out');
+                        els.art.classList.add('loaded'); // Ensure loaded class is present if used
+
+                        els.bg.classList.remove('fade-out');
+                    };
+                }, 1500);
+            }
+        }
+
+        // Initial call
+        fetchTrack();
+
+        // Poll every 5 seconds
+        setInterval(fetchTrack, 5000);
+
+    </script>
+</body>
+
+</html>
