@@ -332,7 +332,8 @@
             // Helper to execute search and filter
             const executeSearch = async (term, entity) => {
                 try {
-                    const itunesUrl = `https://itunes.apple.com/search?term=${term}&media=music&entity=${entity}&limit=25`;
+                    // Added &country=us
+                    const itunesUrl = `https://itunes.apple.com/search?term=${term}&media=music&entity=${entity}&limit=25&country=us`;
                     const response = await fetch(itunesUrl);
                     const data = await response.json();
 
@@ -344,9 +345,19 @@
                 }
             };
 
+            // Clean Query Helper
+            const cleanQuery = (str) => {
+                return str.replace(/\s*\(.*?\)\s*/g, '') // Remove (Text)
+                    .replace(/\b(deluxe|remastered|expanded|anniversary|edition|version)\b/gi, '') // Remove keywords
+                    .replace(/\s+/g, ' ')
+                    .trim();
+            };
+
             // Strategy 1: Search by Album (Preferred)
             if (lastFmAlbum) {
-                const query = encodeURIComponent(`${artist} ${lastFmAlbum}`);
+                // Use cleaned album name for better hit rate
+                const cleanAlbum = cleanQuery(lastFmAlbum);
+                const query = encodeURIComponent(`${artist} ${cleanAlbum}`);
                 const result = await executeSearch(query, 'album');
                 if (result) return result;
                 console.log("Album search failed, falling back to track search...");
@@ -381,7 +392,7 @@
             // Best match candidates
             let exactMatch = null;
             let softMatch = null;
-            let validResults = []; // For partial matches and general candidates
+            let validResults = [];
 
             for (const result of results) {
                 if (!result.artworkUrl100) continue;
@@ -408,27 +419,31 @@
                 // 3. Soft Filter
                 const isSoft = softKeywords.some(kw => resAlbum.includes(kw));
                 if (targetAlbum && !targetAlbum.includes(resAlbum) && isSoft) {
-                    if (!softMatch) softMatch = result; // Keep first acceptable soft match
+                    if (!softMatch) softMatch = result;
                     continue;
                 }
 
-                // If not an exact match and passed hard/soft filters, add to valid candidates
                 validResults.push(result);
             }
 
             let finalResult = exactMatch;
 
             if (!finalResult) {
-                // Try to find a partial match in validResults
-                const partialMatch = validResults.find(res => normalize(res.collectionName).includes(targetAlbum));
+                // Fuzzy Match Loop: Bidirectional includes check
+                // "Album" in "Album (Deluxe)" OR "Album (Deluxe)" in "Album" (unlikely but safe)
+                const partialMatch = validResults.find(res => {
+                    const normRes = normalize(res.collectionName);
+                    return normRes.includes(targetAlbum) || targetAlbum.includes(normRes);
+                });
 
                 if (partialMatch) {
                     finalResult = partialMatch;
                 } else if (validResults.length > 0) {
-                    // If we have results that aren't "Greatest Hits" and aren't "Deluxe", use first one
+                    // If we have results and no hard violations, take first one?
+                    // Strictness: Maybe only if we verified artist? Yes we did.
+                    // Last resort fallback
                     finalResult = validResults[0];
                 } else if (softMatch) {
-                    // If we only found a "Deluxe" version and we have no other options, USE IT.
                     finalResult = softMatch;
                 }
             }
