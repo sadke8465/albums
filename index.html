@@ -85,25 +85,27 @@
         /* Zoom States */
         /* 
            Logic: Align Album Corner to Screen Corner exactly.
-           Half Scaled Width = 85vmin * 2.5 / 2 = 106.25vmin
-           TL: Move Right/Down to bring TL corner (currently offscreen) to 0,0
-           TranslateX = 106.25vmin - 50vw
-           TranslateY = 106.25vmin - 50vh
+           Scale reduced to 1.8 (Requested "A bit less zoom").
+           Half Scaled Width = 85vmin * 1.8 / 2 = 76.5vmin
+           
+           TL: Move Right/Down to bring TL corner to 0,0
+           TranslateX = 76.5vmin - 50vw
+           TranslateY = 76.5vmin - 50vh
         */
         .album-art-wrapper.zoom-tl {
-            transform: translate(calc(106.25vmin - 50vw), calc(106.25vmin - 50vh)) scale(2.5);
+            transform: translate(calc(76.5vmin - 50vw), calc(76.5vmin - 50vh)) scale(1.8);
         }
 
         .album-art-wrapper.zoom-tr {
-            transform: translate(calc(50vw - 106.25vmin), calc(106.25vmin - 50vh)) scale(2.5);
+            transform: translate(calc(50vw - 76.5vmin), calc(76.5vmin - 50vh)) scale(1.8);
         }
 
         .album-art-wrapper.zoom-br {
-            transform: translate(calc(50vw - 106.25vmin), calc(50vh - 106.25vmin)) scale(2.5);
+            transform: translate(calc(50vw - 76.5vmin), calc(50vh - 76.5vmin)) scale(1.8);
         }
 
         .album-art-wrapper.zoom-bl {
-            transform: translate(calc(106.25vmin - 50vw), calc(50vh - 106.25vmin)) scale(2.5);
+            transform: translate(calc(76.5vmin - 50vw), calc(50vh - 76.5vmin)) scale(1.8);
         }
 
         /* Remove radius when zoomed to look like full bleed image */
