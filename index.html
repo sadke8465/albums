@@ -326,12 +326,20 @@
                     return null;
                 }
 
-                // Normalization helper
-                const normalize = (str) => str ? str.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+                // Enhanced Normalization: remove 'the', punctuation, spaces, lowercase
+                const normalize = (str) => {
+                    if (!str) return '';
+                    return str.toLowerCase()
+                        .replace(/^the\s+/, '') // Remove leading "The "
+                        .replace(/['".,\/#!$%\^&\*;:{}=\-_`~()]/g, "") // punctuation
+                        .replace(/\s+/g, ""); // spaces
+                };
+
                 const targetAlbum = normalize(lastFmAlbum);
+                const targetArtist = normalize(artist);
 
                 // Keywords to avoid unless target album has them
-                const badKeywords = ['greatest', 'bestof', 'hits', 'collection', 'anthology', 'essentials', 'deluxe', 'expanded', 'remastered', 'anniversary'];
+                const badKeywords = ['greatest', 'bestof', 'hits', 'collection', 'anthology', 'essentials', 'deluxe', 'expanded', 'remastered', 'anniversary', 'single', 'ep'];
                 const targetHasBadKeyword = badKeywords.some(kw => targetAlbum.includes(kw));
 
                 // Filter Loop
@@ -340,6 +348,11 @@
 
                 for (const result of data.results) {
                     if (!result.artworkUrl100) continue;
+
+                    // Strict Artist Check
+                    if (normalize(result.artistName) !== targetArtist) {
+                        continue;
+                    }
 
                     const resAlbum = normalize(result.collectionName);
 
@@ -362,26 +375,22 @@
                 let finalResult = exactMatch;
 
                 if (!finalResult) {
-                    // Fallback to first valid result (filtered)
-                    if (validResults.length > 0) {
-                        finalResult = validResults[0];
-                    } else if (data.results.length > 0) {
-                        // Desperation: If all were filtered out but we have something, take the first one?
-                        // User said "Reject any result where...", implying strictness.
-                        // "Safe" behavior: if strict filtering killed everything, maybe fallback to first raw result or null?
-                        // "If iTunes returns no result" -> placeholder.
-                        // But finding *something* is usually better than gray screen.
-                        // User said "Strict Filtering Rule (YOU SHOULD APPLY)".
-                        // So if we filter everything, we return null?
-                        // Let's return null to be safe/strict, relying on Last.fm text logic next? 
-                        // Wait, we don't display text. We display image.
-                        // Let's use the first raw result as a last resort but only if it's very close match?
-                        // Actually, "Do not display broken images" "Do not black-screen".
-                        // Let's stick to validResults. If empty, maybe compilation is all we have.
-                        // User said: "This single rule alone removes 90% of false album art."
-                        // Let's assume validResults has something. If not, return null (and use placeholder).
-                        return null;
+                    // Fallback to first valid result IF it contains the album name partially?
+                    // Or strictly fail if no exact match?
+                    // User said "Make tweaks to make sure i see EXACTLY the same album art... No variants".
+                    // This implies we should be VERY strict.
+                    // If we have validResults (that passed invalid keyword filter), we can check if they contain the target album name.
+
+                    const partialMatch = validResults.find(res => normalize(res.collectionName).includes(targetAlbum));
+                    if (partialMatch) {
+                        finalResult = partialMatch;
                     }
+                    // Else: we have valid results (same artist, track, passed keyword filter) but album name doesn't match target.
+                    // e.g. "Album X" vs "Album X (Deluxe)" -> filtered out.
+                    // e.g. "Album X" vs "Album Y".
+                    // If we are strict, we return null.
+
+                    // Let's rely on exactMatch or specific partial match for safety.
                 }
 
                 if (finalResult && finalResult.artworkUrl100) {
