@@ -40,7 +40,7 @@
             height: 120%;
             background-size: cover;
             background-position: center;
-            filter: blur(80px) brightness(0.7);
+            filter: blur(80px) brightness(0.9);
             z-index: -1;
             /* We need to transition opacity for hiding via zoom AND for album change.
                We can use comma separated transitions if needed, but here simple opacity is fine.
@@ -328,110 +328,116 @@
         }
 
         async function fetchItunesArtwork(artist, track, lastFmAlbum) {
-            try {
-                const query = encodeURIComponent(`${artist} ${track}`);
-                // Limit increased to 25 to find correct album
-                const itunesUrl = `https://itunes.apple.com/search?term=${query}&media=music&entity=song&limit=25`;
 
-                const response = await fetch(itunesUrl);
-                const data = await response.json();
+            // Helper to execute search and filter
+            const executeSearch = async (term, entity) => {
+                try {
+                    const itunesUrl = `https://itunes.apple.com/search?term=${term}&media=music&entity=${entity}&limit=25`;
+                    const response = await fetch(itunesUrl);
+                    const data = await response.json();
 
-                if (!data.results || data.results.length === 0) {
+                    if (!data.results || data.results.length === 0) return null;
+                    return filterItunesResults(data.results, artist, lastFmAlbum);
+                } catch (e) {
+                    console.warn(`iTunes search failed for ${entity}`, e);
                     return null;
                 }
+            };
 
-                // Enhanced Normalization: remove 'the', punctuation, spaces, lowercase
-                const normalize = (str) => {
-                    if (!str) return '';
-                    return str.toLowerCase()
-                        .replace(/^the\s+/, '') // Remove leading "The "
-                        .replace(/['".,\/#!$%\^&\*;:{}=\-_`~()]/g, "") // punctuation
-                        .replace(/\s+/g, ""); // spaces
-                };
-
-                const targetAlbum = normalize(lastFmAlbum);
-                const targetArtist = normalize(artist);
-
-                // 1. HARD Filters (Reject these ALWAYS unless target matches them)
-                const hardKeywords = ['greatest', 'bestof', 'hits', 'collection', 'anthology', 'essentials'];
-
-                // 2. SOFT Filters (Prefer standard, but accept these if needed)
-                const softKeywords = ['deluxe', 'expanded', 'remastered', 'anniversary', 'edition'];
-
-                const targetHasHard = hardKeywords.some(kw => targetAlbum.includes(kw));
-                // const targetHasSoft = softKeywords.some(kw => targetAlbum.includes(kw)); // Unused, we use logic below.
-
-                // Filter Loop
-                let validResults = [];
-                let exactMatch = null;
-                let softMatch = null; // Matches that failed soft filter but passed hard filter
-
-                for (const result of data.results) {
-                    if (!result.artworkUrl100) continue;
-
-                    // Strict Artist Check
-                    if (normalize(result.artistName) !== targetArtist) {
-                        continue;
-                    }
-
-                    const resAlbum = normalize(result.collectionName);
-
-                    // 1. Check for Exact Album Match
-                    if (resAlbum === targetAlbum) {
-                        exactMatch = result;
-                        break;
-                    }
-
-                    // 2. Hard Filter: If target doesn't have "Greatest", reject "Greatest"
-                    if (!targetHasHard) {
-                        const isHard = hardKeywords.some(kw => resAlbum.includes(kw));
-                        if (isHard) continue; // Hard Reject
-                    }
-
-                    // 3. Soft Filter
-                    const isSoft = softKeywords.some(kw => resAlbum.includes(kw));
-                    if (!targetAlbum.includes(resAlbum) && isSoft) {
-                        // It has a soft keyword (Deluxe) that target doesn't. 
-                        // Store it as a fallback, but don't add to main 'validResults' which implies strict adherence?
-                        // Or add to validResults but we prioritize exactMatch.
-                        if (!softMatch) softMatch = result; // Keep the first acceptable soft match
-                        continue; // Don't treat as "primary" valid candidate yet
-                    }
-
-                    validResults.push(result);
-                }
-
-                // Decision Logic
-                let finalResult = exactMatch;
-
-                if (!finalResult) {
-                    // Try to find a partial match in validResults
-                    // e.g. Target: "Album" | Res: "The Album" (normalized to "album") -> caught by exactMatch
-                    // e.g. Target: "Album" | Res: "Album [UK Version]" -> validResult
-                    const partialMatch = validResults.find(res => normalize(res.collectionName).includes(targetAlbum));
-
-                    if (partialMatch) {
-                        finalResult = partialMatch;
-                    } else if (validResults.length > 0) {
-                        // If we have results that aren't "Greatest Hits" and aren't "Deluxe", use first one?
-                        finalResult = validResults[0];
-                    } else if (softMatch) {
-                        // If we only found a "Deluxe" version and we have no other options, USE IT.
-                        // This prevents the black screen for "Deluxe Only" albums.
-                        finalResult = softMatch;
-                    }
-                }
-
-                if (finalResult && finalResult.artworkUrl100) {
-                    return finalResult.artworkUrl100.replace('100x100bb', '500x500bb');
-                }
-
-                return null;
-
-            } catch (e) {
-                console.warn('iTunes fetch failed', e);
-                return null;
+            // Strategy 1: Search by Album (Preferred)
+            if (lastFmAlbum) {
+                const query = encodeURIComponent(`${artist} ${lastFmAlbum}`);
+                const result = await executeSearch(query, 'album');
+                if (result) return result;
+                console.log("Album search failed, falling back to track search...");
             }
+
+            // Strategy 2: Search by Track (Fallback)
+            const query = encodeURIComponent(`${artist} ${track}`);
+            return await executeSearch(query, 'song');
+        }
+
+        function filterItunesResults(results, targetArtistName, targetAlbumName) {
+            // Enhanced Normalization
+            const normalize = (str) => {
+                if (!str) return '';
+                return str.toLowerCase()
+                    .replace(/^the\s+/, '')
+                    .replace(/['".,\/#!$%\^&\*;:{}=\-_`~()]/g, "")
+                    .replace(/\s+/g, "");
+            };
+
+            const targetArtist = normalize(targetArtistName);
+            const targetAlbum = normalize(targetAlbumName);
+
+            // 1. HARD Filters (Reject these ALWAYS unless target matches them)
+            const hardKeywords = ['greatest', 'bestof', 'hits', 'collection', 'anthology', 'essentials'];
+
+            // 2. SOFT Filters (Prefer standard, but accept these if needed)
+            const softKeywords = ['deluxe', 'expanded', 'remastered', 'anniversary', 'edition'];
+
+            const targetHasHard = hardKeywords.some(kw => targetAlbum.includes(kw));
+
+            // Best match candidates
+            let exactMatch = null;
+            let softMatch = null;
+            let validResults = []; // For partial matches and general candidates
+
+            for (const result of results) {
+                if (!result.artworkUrl100) continue;
+
+                // Strict Artist Check
+                if (normalize(result.artistName) !== targetArtist) {
+                    continue;
+                }
+
+                const resAlbum = normalize(result.collectionName);
+
+                // 1. Check for Exact Album Match
+                if (resAlbum === targetAlbum) {
+                    exactMatch = result;
+                    break;
+                }
+
+                // 2. Hard Filter: If target doesn't have "Greatest", reject "Greatest"
+                if (!targetHasHard) {
+                    const isHard = hardKeywords.some(kw => resAlbum.includes(kw));
+                    if (isHard) continue; // Hard Reject
+                }
+
+                // 3. Soft Filter
+                const isSoft = softKeywords.some(kw => resAlbum.includes(kw));
+                if (targetAlbum && !targetAlbum.includes(resAlbum) && isSoft) {
+                    if (!softMatch) softMatch = result; // Keep first acceptable soft match
+                    continue;
+                }
+
+                // If not an exact match and passed hard/soft filters, add to valid candidates
+                validResults.push(result);
+            }
+
+            let finalResult = exactMatch;
+
+            if (!finalResult) {
+                // Try to find a partial match in validResults
+                const partialMatch = validResults.find(res => normalize(res.collectionName).includes(targetAlbum));
+
+                if (partialMatch) {
+                    finalResult = partialMatch;
+                } else if (validResults.length > 0) {
+                    // If we have results that aren't "Greatest Hits" and aren't "Deluxe", use first one
+                    finalResult = validResults[0];
+                } else if (softMatch) {
+                    // If we only found a "Deluxe" version and we have no other options, USE IT.
+                    finalResult = softMatch;
+                }
+            }
+
+            if (finalResult && finalResult.artworkUrl100) {
+                return finalResult.artworkUrl100.replace('100x100bb', '500x500bb');
+            }
+
+            return null;
         }
 
         function updateUI(img) {
