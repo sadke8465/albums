@@ -288,8 +288,8 @@
         const USERNAME = 'Noamsadi95';
         const URL = `https://ws.audioscrobbler.com/2.0/?method=user.getRecentTracks&user=${USERNAME}&api_key=${API_KEY}&format=json&limit=1`;
 
-        // MQTT Configuration (Switched to HiveMQ)
-        const MQTT_BROKER = 'wss://broker.hivemq.com:8000/mqtt';
+        // MQTT Configuration (Switched to HiveMQ Secure)
+        const MQTT_BROKER = 'wss://broker.hivemq.com:8884/mqtt';
         const MQTT_TOPIC_UPDATE = 'sadke8465/crt/update';
         const MQTT_TOPIC_SAVE = 'sadke8465/crt/save';
         const MQTT_TOPIC_REQUEST = 'sadke8465/crt/request';
