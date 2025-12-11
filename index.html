@@ -240,6 +240,12 @@
         <h1 style="color: #444; font-family: monospace; letter-spacing: 5px;">VERSION 5.0</h1>
     </div>
 
+    <!-- Debug Log -->
+    <div id="debug-log"
+        style="position:fixed; bottom:20px; left:20px; color:#0f0; font-family:monospace; font-size:12px; z-index:9999; text-shadow:1px 1px 0 #000; max-height:200px; overflow:hidden; pointer-events:none;">
+        System Init...
+    </div>
+
     <!-- Calibration Overlay -->
     <div id="calibration-hint"
         style="position:fixed; bottom:20px; left:50%; transform:translateX(-50%); color:#555; font-family:monospace; z-index:9000; opacity:0; transition:opacity 2s;">
@@ -248,17 +254,17 @@
 
     <!-- Connection Status -->
     <div id="connection-status"
-        style="position:fixed; bottom:20px; right:20px; width:10px; height:10px; border-radius:50%; background:red; z-index:9001; box-shadow:0 0 5px red;"
+        style="position:fixed; bottom:20px; right:20px; width:15px; height:15px; border-radius:50%; background:red; z-index:9001; box-shadow:0 0 5px red; border:2px solid #fff;"
         title="MQTT Disconnected"></div>
 
     <div id="calibration-overlay" class="hidden">
         <div class="calib-box">
-            <h3>CRT CALIBRATION</h3>
+            <h3>CRT CALIBRATION (Local Override)</h3>
             <div class="calib-row"><span>POS X (Arrows):</span> <span id="val-x">0</span></div>
             <div class="calib-row"><span>POS Y (Arrows):</span> <span id="val-y">0</span></div>
             <div class="calib-row"><span>WIDTH (Shift+L/R):</span> <span id="val-w">1.33</span></div>
             <div class="calib-row"><span>SIZE (Shift+U/D):</span> <span id="val-s">0.85</span></div>
-            <p class="calib-hint">Press 'C' to Close & Save</p>
+            <p class="calib-hint">REMOTE IS ACTIVE. Local keys also work.</p>
         </div>
     </div>
 
@@ -282,18 +288,28 @@
         const USERNAME = 'Noamsadi95';
         const URL = `https://ws.audioscrobbler.com/2.0/?method=user.getRecentTracks&user=${USERNAME}&api_key=${API_KEY}&format=json&limit=1`;
 
-        // MQTT Configuration
-        const MQTT_BROKER = 'wss://broker.emqx.io:8084/mqtt';
+        // MQTT Configuration (Switched to HiveMQ)
+        const MQTT_BROKER = 'wss://broker.hivemq.com:8000/mqtt';
         const MQTT_TOPIC_UPDATE = 'sadke8465/crt/update';
         const MQTT_TOPIC_SAVE = 'sadke8465/crt/save';
-        const MQTT_TOPIC_REQUEST = 'sadke8465/crt/request'; // Admin asking for current state
-        const MQTT_TOPIC_STATE = 'sadke8465/crt/state'; // Display sending current state
-        const MQTT_TOPIC_COMMAND = 'sadke8465/crt/command'; // New Command Topic
+        const MQTT_TOPIC_REQUEST = 'sadke8465/crt/request';
+        const MQTT_TOPIC_STATE = 'sadke8465/crt/state';
+        const MQTT_TOPIC_COMMAND = 'sadke8465/crt/command';
 
         const CACHE = {
-            id: null, // Artist + Track string
+            id: null,
             image: null
         };
+
+        // Logging Helper
+        const logEl = document.getElementById('debug-log');
+        function log(msg) {
+            const line = document.createElement('div');
+            line.innerText = `> ${msg}`;
+            logEl.prepend(line);
+            if (logEl.children.length > 5) logEl.lastChild.remove();
+            console.log(msg);
+        }
 
         let zoomState = 0; // 0: Default, 1: TL, 2: TR, 3: BR, 4: BL
         let autoLoop = true; // Flag to pause loop during manual override
@@ -310,7 +326,14 @@
                 document.getElementById('art-layer-1')
             ],
             loading: document.getElementById('loading-screen'),
-            status: document.getElementById('connection-status')
+            status: document.getElementById('connection-status'),
+            calibOverlay: document.getElementById('calibration-overlay'),
+            vals: {
+                x: document.getElementById('val-x'),
+                y: document.getElementById('val-y'),
+                w: document.getElementById('val-w'),
+                s: document.getElementById('val-s')
+            }
         };
 
         // State for Dual Buffering
@@ -353,13 +376,13 @@
         } catch (e) { }
 
         // Connect to MQTT
-        console.log("Connecting to MQTT...");
+        log(`Connecting to ${MQTT_BROKER}...`);
         const client = mqtt.connect(MQTT_BROKER);
 
         client.on('connect', () => {
-            console.log("MQTT Connected");
+            log("MQTT CONNECTED!");
             els.status.style.background = '#0f0';
-            els.status.style.boxShadow = '0 0 5px #0f0';
+            els.status.style.boxShadow = '0 0 10px #0f0';
             els.status.title = 'MQTT Connected';
             client.subscribe(MQTT_TOPIC_UPDATE);
             client.subscribe(MQTT_TOPIC_SAVE);
@@ -370,15 +393,20 @@
             broadcastConfig();
         });
 
+        client.on('error', (err) => {
+            log("MQTT Error: " + err.message);
+            els.status.style.background = 'red';
+        });
+
         client.on('message', (topic, message) => {
             const msgStr = message.toString();
-            console.log(`MQTT Info: ${topic}`, msgStr);
+            // log(`Rx: ${topic.split('/').pop()}`);
 
             if (topic === MQTT_TOPIC_COMMAND) {
                 try {
                     const cmd = JSON.parse(msgStr);
                     if (cmd.action === 'set_state') {
-                        // FORCE JUMP TO STATE
+                        log(`CMD: Set State ${cmd.val}`);
                         autoLoop = false; // Stop random switching
                         zoomState = cmd.val;
                         applyZoomState(zoomState);
@@ -395,9 +423,11 @@
                     // data: { state: 0, params: { ... } }
                     if (configs[data.state]) {
                         configs[data.state] = { ...configs[data.state], ...data.params };
+                        log(`Upd State ${data.state}: ${JSON.stringify(data.params)}`);
                         // If we updated the CURRENT active state, redraw immediately
                         if (zoomState === data.state) {
                             updateZoomCalculations();
+                            updateLocalOverlayVals(); // Sync local UI
                         }
                     }
                 } catch (e) { console.error("MQTT Update Parse Error", e); }
@@ -405,13 +435,22 @@
 
             if (topic === MQTT_TOPIC_SAVE) {
                 localStorage.setItem('crt_configs_v2', JSON.stringify(configs));
-                alert("Settings Saved to Memory!");
+                log("SAVED to Disk!");
+                alert("Settings Saved!");
             }
 
             if (topic === MQTT_TOPIC_REQUEST) {
                 broadcastConfig();
             }
         });
+
+        function updateLocalOverlayVals() {
+            const c = configs[zoomState];
+            els.vals.x.innerText = c.nudgeX;
+            els.vals.y.innerText = c.nudgeY;
+            els.vals.w.innerText = c.hScale.toFixed(2);
+            els.vals.s.innerText = c.sizeFactor.toFixed(2);
+        }
 
         function broadcastConfig() {
             if (client.connected) {
