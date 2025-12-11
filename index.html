@@ -240,31 +240,20 @@
         <h1 style="color: #444; font-family: monospace; letter-spacing: 5px;">VERSION 5.0</h1>
     </div>
 
-    <!-- Debug Log -->
-    <div id="debug-log"
-        style="position:fixed; bottom:20px; left:20px; color:#0f0; font-family:monospace; font-size:12px; z-index:9999; text-shadow:1px 1px 0 #000; max-height:200px; overflow:hidden; pointer-events:none;">
-        System Init...
-    </div>
-
     <!-- Calibration Overlay -->
     <div id="calibration-hint"
         style="position:fixed; bottom:20px; left:50%; transform:translateX(-50%); color:#555; font-family:monospace; z-index:9000; opacity:0; transition:opacity 2s;">
         Press 'C' to Calibrate
     </div>
 
-    <!-- Connection Status -->
-    <div id="connection-status"
-        style="position:fixed; bottom:20px; right:20px; width:15px; height:15px; border-radius:50%; background:red; z-index:9001; box-shadow:0 0 5px red; border:2px solid #fff;"
-        title="MQTT Disconnected"></div>
-
     <div id="calibration-overlay" class="hidden">
         <div class="calib-box">
-            <h3>CRT CALIBRATION (Local Override)</h3>
+            <h3>CRT CALIBRATION</h3>
             <div class="calib-row"><span>POS X (Arrows):</span> <span id="val-x">0</span></div>
             <div class="calib-row"><span>POS Y (Arrows):</span> <span id="val-y">0</span></div>
             <div class="calib-row"><span>WIDTH (Shift+L/R):</span> <span id="val-w">1.33</span></div>
             <div class="calib-row"><span>SIZE (Shift+U/D):</span> <span id="val-s">0.85</span></div>
-            <p class="calib-hint">REMOTE IS ACTIVE. Local keys also work.</p>
+            <p class="calib-hint">Press 'C' to Close & Save</p>
         </div>
     </div>
 
@@ -280,39 +269,17 @@
         </div>
     </div>
 
-    <!-- MQTT Library -->
-    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
-
     <script>
         const API_KEY = 'f12a1d5a9aad4c0d570403a0aabc9f61';
         const USERNAME = 'Noamsadi95';
         const URL = `https://ws.audioscrobbler.com/2.0/?method=user.getRecentTracks&user=${USERNAME}&api_key=${API_KEY}&format=json&limit=1`;
 
-        // MQTT Configuration (Switched to HiveMQ Secure)
-        const MQTT_BROKER = 'wss://broker.hivemq.com:8884/mqtt';
-        const MQTT_TOPIC_UPDATE = 'sadke8465/crt/update';
-        const MQTT_TOPIC_SAVE = 'sadke8465/crt/save';
-        const MQTT_TOPIC_REQUEST = 'sadke8465/crt/request';
-        const MQTT_TOPIC_STATE = 'sadke8465/crt/state';
-        const MQTT_TOPIC_COMMAND = 'sadke8465/crt/command';
-
         const CACHE = {
-            id: null,
+            id: null, // Artist + Track string
             image: null
         };
 
-        // Logging Helper
-        const logEl = document.getElementById('debug-log');
-        function log(msg) {
-            const line = document.createElement('div');
-            line.innerText = `> ${msg}`;
-            logEl.prepend(line);
-            if (logEl.children.length > 5) logEl.lastChild.remove();
-            console.log(msg);
-        }
-
         let zoomState = 0; // 0: Default, 1: TL, 2: TR, 3: BR, 4: BL
-        let autoLoop = true; // Flag to pause loop during manual override
 
         const els = {
             bgWrapper: document.getElementById('ambient-bg'),
@@ -325,15 +292,7 @@
                 document.getElementById('art-layer-0'),
                 document.getElementById('art-layer-1')
             ],
-            loading: document.getElementById('loading-screen'),
-            status: document.getElementById('connection-status'),
-            calibOverlay: document.getElementById('calibration-overlay'),
-            vals: {
-                x: document.getElementById('val-x'),
-                y: document.getElementById('val-y'),
-                w: document.getElementById('val-w'),
-                s: document.getElementById('val-s')
-            }
+            loading: document.getElementById('loading-screen')
         };
 
         // State for Dual Buffering
@@ -347,115 +306,47 @@
             els.artLayers[1].style.zIndex = 1;
         }
 
-        // --- Configuration & Remote Control ---
+        // Zoom Logic
+        // Automatically advance. 
+        // Logic: 12s for quadrants (states 1-4), 36s for full album (state 0).
 
-        // Default Config for ONE state
-        const DEFAULT_PARAMS = {
-            hScale: 1.25,
+        // --- Calibration Mode ---
+        let calibrationMode = false;
+
+        // Default Config (V5.1 optimized)
+        const DEFAULT_CONFIG = {
+            version: 2, // Increment to force reset if needed
+            hScale: 1.25, // Less aggressive stretch
             nudgeX: 0,
             nudgeY: 0,
-            sizeFactor: 0.95
+            sizeFactor: 0.95 // Fill more of the screen
         };
 
-        // Full Configuration (Per State)
-        // 0: Full, 1: TL, 2: TR, 3: BR, 4: BL
-        let configs = {
-            0: { ...DEFAULT_PARAMS },
-            1: { ...DEFAULT_PARAMS },
-            2: { ...DEFAULT_PARAMS },
-            3: { ...DEFAULT_PARAMS },
-            4: { ...DEFAULT_PARAMS }
-        };
+        let config = { ...DEFAULT_CONFIG };
 
-        // Load Persistence
+        // Load Config
         try {
-            const saved = localStorage.getItem('crt_configs_v2');
+            const saved = localStorage.getItem('crt_config');
             if (saved) {
-                configs = JSON.parse(saved);
+                const parsed = JSON.parse(saved);
+                // Only use saved if version matches, else reset to new defaults
+                if (parsed.version === DEFAULT_CONFIG.version) {
+                    config = { ...config, ...parsed };
+                }
             }
         } catch (e) { }
 
-        // Connect to MQTT
-        log(`Connecting to ${MQTT_BROKER}...`);
-        const client = mqtt.connect(MQTT_BROKER);
+        const overlay = document.getElementById('calibration-overlay');
+        const uiX = document.getElementById('val-x');
+        const uiY = document.getElementById('val-y');
+        const uiW = document.getElementById('val-w');
+        const uiS = document.getElementById('val-s');
 
-        client.on('connect', () => {
-            log("MQTT CONNECTED!");
-            els.status.style.background = '#0f0';
-            els.status.style.boxShadow = '0 0 10px #0f0';
-            els.status.title = 'MQTT Connected';
-            client.subscribe(MQTT_TOPIC_UPDATE);
-            client.subscribe(MQTT_TOPIC_SAVE);
-            client.subscribe(MQTT_TOPIC_REQUEST);
-            client.subscribe(MQTT_TOPIC_COMMAND);
-
-            // Broadcast initial state just in case admin is already open
-            broadcastConfig();
-        });
-
-        client.on('error', (err) => {
-            log("MQTT Error: " + err.message);
-            els.status.style.background = 'red';
-        });
-
-        client.on('message', (topic, message) => {
-            const msgStr = message.toString();
-            // log(`Rx: ${topic.split('/').pop()}`);
-
-            if (topic === MQTT_TOPIC_COMMAND) {
-                try {
-                    const cmd = JSON.parse(msgStr);
-                    if (cmd.action === 'set_state') {
-                        log(`CMD: Set State ${cmd.val}`);
-                        autoLoop = false; // Stop random switching
-                        zoomState = cmd.val;
-                        applyZoomState(zoomState);
-
-                        // Resume auto loop after 60 seconds of inactivity if desired, or just leave it manual
-                        // Let's leave it manual for now to allow calibration
-                    }
-                } catch (e) { console.error("MQTT Command Parse Error", e); }
-            }
-
-            if (topic === MQTT_TOPIC_UPDATE) {
-                try {
-                    const data = JSON.parse(msgStr);
-                    // data: { state: 0, params: { ... } }
-                    if (configs[data.state]) {
-                        configs[data.state] = { ...configs[data.state], ...data.params };
-                        log(`Upd State ${data.state}: ${JSON.stringify(data.params)}`);
-                        // If we updated the CURRENT active state, redraw immediately
-                        if (zoomState === data.state) {
-                            updateZoomCalculations();
-                            updateLocalOverlayVals(); // Sync local UI
-                        }
-                    }
-                } catch (e) { console.error("MQTT Update Parse Error", e); }
-            }
-
-            if (topic === MQTT_TOPIC_SAVE) {
-                localStorage.setItem('crt_configs_v2', JSON.stringify(configs));
-                log("SAVED to Disk!");
-                alert("Settings Saved!");
-            }
-
-            if (topic === MQTT_TOPIC_REQUEST) {
-                broadcastConfig();
-            }
-        });
-
-        function updateLocalOverlayVals() {
-            const c = configs[zoomState];
-            els.vals.x.innerText = c.nudgeX;
-            els.vals.y.innerText = c.nudgeY;
-            els.vals.w.innerText = c.hScale.toFixed(2);
-            els.vals.s.innerText = c.sizeFactor.toFixed(2);
-        }
-
-        function broadcastConfig() {
-            if (client.connected) {
-                client.publish(MQTT_TOPIC_STATE, JSON.stringify(configs));
-            }
+        function updateOverlay() {
+            uiX.innerText = config.nudgeX;
+            uiY.innerText = config.nudgeY;
+            uiW.innerText = config.hScale.toFixed(2);
+            uiS.innerText = config.sizeFactor.toFixed(2);
         }
 
         // CSS Variables for Zoom
@@ -463,16 +354,13 @@
             const viewportW = window.innerWidth;
             const viewportH = window.innerHeight;
 
-            // Get Config for CURRENT State
-            const currentConfig = configs[zoomState] || DEFAULT_PARAMS;
-
             // Use Config Values
-            const HORIZONTAL_SCALE = currentConfig.hScale;
-            const NUDGE_X = currentConfig.nudgeX;
-            const NUDGE_Y = currentConfig.nudgeY;
+            const HORIZONTAL_SCALE = config.hScale;
+            const NUDGE_X = config.nudgeX;
+            const NUDGE_Y = config.nudgeY;
 
             // Element size defined by Size Factor
-            const size = Math.min(viewportW, viewportH) * currentConfig.sizeFactor;
+            const size = Math.min(viewportW, viewportH) * config.sizeFactor;
             const scale = 1.8;
 
             // Calculate Scaled Dimensions
@@ -498,18 +386,18 @@
             document.documentElement.style.setProperty('--zoom-scale-y', scale);
 
             // Base Scales (for State 0)
-            // Note: State 0 uses the zoom math, but we also apply base scales for the container
-            // If we are in State 0, we apply these. If not, they don't matter much (hidden or transformed).
-            // Actually, best to just keep them synced to current config.
             document.documentElement.style.setProperty('--base-scale-x', 1 * HORIZONTAL_SCALE);
             document.documentElement.style.setProperty('--base-scale-y', 1);
 
             // Update Base Size
-            els.wrapper.style.width = `${currentConfig.sizeFactor * 100}vmin`;
-            els.wrapper.style.height = `${currentConfig.sizeFactor * 100}vmin`;
+            els.wrapper.style.width = `${config.sizeFactor * 100}vmin`;
+            els.wrapper.style.height = `${config.sizeFactor * 100}vmin`;
         }
 
         window.addEventListener('resize', updateZoomCalculations);
+        // Also call on load
+        updateZoomCalculations();
+
 
         function scheduleNextZoom() {
             // Determine how long to stay in the CURRENT state before moving to next
@@ -517,9 +405,10 @@
             const delay = (zoomState === 0) ? 36000 : 12000;
 
             setTimeout(() => {
-                // Determine next state
-                zoomState = (zoomState + 1) % 5;
-                applyZoomState(zoomState);
+                if (!calibrationMode) { // Pause rotation during calibration
+                    zoomState = (zoomState + 1) % 5;
+                    applyZoomState(zoomState);
+                }
                 scheduleNextZoom();
             }, delay);
         }
@@ -528,10 +417,60 @@
         scheduleNextZoom();
 
         document.addEventListener('keydown', (e) => {
-            // 'K' to skip for debugging
-            if (e.key.toLowerCase() === 'k') {
+            const key = e.key.toLowerCase();
+
+            if (key === 'c') {
+                calibrationMode = !calibrationMode;
+                if (calibrationMode) {
+                    overlay.classList.remove('hidden');
+                    updateOverlay();
+                } else {
+                    overlay.classList.add('hidden');
+                    // Save
+                    localStorage.setItem('crt_config', JSON.stringify(config));
+                }
+                return;
+            }
+
+            // K is for standard toggle (only if not calibrating)
+            if (key === 'k' && !calibrationMode) {
                 zoomState = (zoomState + 1) % 5;
                 applyZoomState(zoomState);
+                return;
+            }
+
+            if (calibrationMode) {
+                const shift = e.shiftKey;
+                const STEP_POS = 1; // 1px
+                const STEP_SCALE = 0.01;
+                const STEP_SIZE = 0.01;
+
+                switch (e.key) {
+                    case 'ArrowUp':
+                        if (shift) config.sizeFactor += STEP_SIZE;
+                        else config.nudgeY -= STEP_POS;
+                        break;
+                    case 'ArrowDown':
+                        if (shift) config.sizeFactor -= STEP_SIZE;
+                        else config.nudgeY += STEP_POS;
+                        break;
+                    case 'ArrowLeft':
+                        if (shift) config.hScale -= STEP_SCALE;
+                        else config.nudgeX -= STEP_POS;
+                        break;
+                    case 'ArrowRight':
+                        if (shift) config.hScale += STEP_SCALE;
+                        else config.nudgeX += STEP_POS;
+                        break;
+                }
+
+                // Limits
+                if (config.sizeFactor < 0.1) config.sizeFactor = 0.1;
+                if (config.sizeFactor > 1.0) config.sizeFactor = 1.0;
+                if (config.hScale < 0.5) config.hScale = 0.5;
+
+                updateZoomCalculations();
+                updateOverlay();
             }
         });
 
@@ -540,10 +479,9 @@
             els.wrapper.classList.remove('zoom-tl', 'zoom-tr', 'zoom-br', 'zoom-bl');
             els.bgWrapper.classList.remove('hidden');
 
-            // 1. Update Layout Math FIRST (so variables are ready before class maps them)
+            // Recalculate just in case (e.g. mobile orientation change)
             updateZoomCalculations();
 
-            // 2. Apply Class
             switch (state) {
                 case 0:
                     break;
@@ -836,6 +774,15 @@
         setTimeout(() => {
             window.location.reload();
         }, 4 * 60 * 60 * 1000); // 4 hours
+
+        // Show hint briefly
+        setTimeout(() => {
+            const hint = document.getElementById('calibration-hint');
+            hint.style.opacity = 1;
+            setTimeout(() => {
+                hint.style.opacity = 0;
+            }, 5000);
+        }, 2000);
 
     </script>
 </body>
