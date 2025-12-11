@@ -241,6 +241,11 @@
     </div>
 
     <!-- Calibration Overlay -->
+    <div id="calibration-hint"
+        style="position:fixed; bottom:20px; left:50%; transform:translateX(-50%); color:#555; font-family:monospace; z-index:9000; opacity:0; transition:opacity 2s;">
+        Press 'C' to Calibrate
+    </div>
+
     <div id="calibration-overlay" class="hidden">
         <div class="calib-box">
             <h3>CRT CALIBRATION</h3>
@@ -308,18 +313,27 @@
         // --- Calibration Mode ---
         let calibrationMode = false;
 
-        // Default Config
-        let config = {
-            hScale: 1.33,
+        // Default Config (V5.1 optimized)
+        const DEFAULT_CONFIG = {
+            version: 2, // Increment to force reset if needed
+            hScale: 1.25, // Less aggressive stretch
             nudgeX: 0,
             nudgeY: 0,
-            sizeFactor: 0.85
+            sizeFactor: 0.95 // Fill more of the screen
         };
+
+        let config = { ...DEFAULT_CONFIG };
 
         // Load Config
         try {
             const saved = localStorage.getItem('crt_config');
-            if (saved) config = { ...config, ...JSON.parse(saved) };
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                // Only use saved if version matches, else reset to new defaults
+                if (parsed.version === DEFAULT_CONFIG.version) {
+                    config = { ...config, ...parsed };
+                }
+            }
         } catch (e) { }
 
         const overlay = document.getElementById('calibration-overlay');
@@ -760,6 +774,15 @@
         setTimeout(() => {
             window.location.reload();
         }, 4 * 60 * 60 * 1000); // 4 hours
+
+        // Show hint briefly
+        setTimeout(() => {
+            const hint = document.getElementById('calibration-hint');
+            hint.style.opacity = 1;
+            setTimeout(() => {
+                hint.style.opacity = 0;
+            }, 5000);
+        }, 2000);
 
     </script>
 </body>
