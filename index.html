@@ -329,7 +329,14 @@
 
         // WebSocket Connection for Live Updates
         let ws = null;
-        const WS_URL = 'ws://localhost:8080';
+
+        // Check URL parameters for WebSocket server address
+        // Usage: index.html?server=192.168.1.100:8080
+        const urlParams = new URLSearchParams(window.location.search);
+        const serverParam = urlParams.get('server');
+        const WS_URL = serverParam ? `ws://${serverParam}` : 'ws://localhost:8080';
+
+        console.log(`🔌 WebSocket URL: ${WS_URL}`);
 
         function connectWebSocket() {
             try {

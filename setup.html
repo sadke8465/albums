@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CRT Display Setup</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e1e1e 0%, #2d2d2d 100%);
+            color: #e0e0e0;
+            padding: 40px 20px;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 600px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid #444;
+            border-radius: 12px;
+            padding: 40px;
+        }
+
+        h1 {
+            font-size: 2.5em;
+            background: linear-gradient(45deg, #00ff88, #00ccff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .info-box {
+            background: rgba(0, 204, 255, 0.1);
+            border: 1px solid #00ccff;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .info-box h3 {
+            color: #00ccff;
+            margin-bottom: 10px;
+        }
+
+        .setup-section {
+            margin: 30px 0;
+        }
+
+        .setup-section h2 {
+            color: #00ff88;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            background: #333;
+            border: 1px solid #555;
+            border-radius: 6px;
+            color: #fff;
+            font-size: 1em;
+            margin-bottom: 10px;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #00ff88;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 15px;
+            font-size: 1.1em;
+            font-weight: bold;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 10px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(45deg, #00ff88, #00ccff);
+            color: #000;
+        }
+
+        .btn-primary:hover {
+            transform: scale(1.02);
+            box-shadow: 0 5px 20px rgba(0, 255, 136, 0.4);
+        }
+
+        .btn-secondary {
+            background: #444;
+            color: #fff;
+        }
+
+        .btn-secondary:hover {
+            background: #555;
+        }
+
+        .code-box {
+            background: #1a1a1a;
+            border: 1px solid #00ff88;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 10px 0;
+            font-family: monospace;
+            color: #00ff88;
+            word-break: break-all;
+        }
+
+        ul {
+            margin-left: 20px;
+            margin-top: 10px;
+            line-height: 1.8;
+        }
+
+        .highlight {
+            color: #00ff88;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🎛️ CRT Display Setup</h1>
+
+        <div class="info-box">
+            <h3>Choose Your Setup Method</h3>
+            <p>Select how you want to use the CRT display:</p>
+        </div>
+
+        <div class="setup-section">
+            <h2>Option 1: Same Network (Recommended)</h2>
+            <p>Control panel on your computer, display on CRT/TV</p>
+
+            <label for="serverIP" style="display: block; margin-top: 15px; color: #aaa;">
+                Enter your computer's IP address:
+            </label>
+            <input type="text" id="serverIP" placeholder="e.g., 192.168.1.100" />
+
+            <button class="btn btn-primary" onclick="openWithServer()">
+                🚀 Open Display with Control Panel
+            </button>
+
+            <div style="margin-top: 15px; font-size: 0.9em; color: #888;">
+                <strong>How to find your IP:</strong><br>
+                Mac: <code
+                    style="background: #333; padding: 2px 6px; border-radius: 3px;">ipconfig getifaddr en0</code><br>
+                Windows: <code style="background: #333; padding: 2px 6px; border-radius: 3px;">ipconfig</code>
+            </div>
+        </div>
+
+        <div class="setup-section">
+            <h2>Option 2: Standalone (No Control Panel)</h2>
+            <p>Just show the album art without live controls</p>
+
+            <button class="btn btn-secondary" onclick="openStandalone()">
+                📺 Open Standalone Display
+            </button>
+        </div>
+
+        <div class="info-box" style="margin-top: 30px;">
+            <h3>📖 Quick Start</h3>
+            <ul>
+                <li><strong>On your computer:</strong> Run <span class="highlight">npm start</span> in the project
+                    folder</li>
+                <li><strong>On this device (CRT):</strong> Choose an option above</li>
+                <li><strong>To control:</strong> Open <span class="highlight">control-panel.html</span> on your computer
+                </li>
+            </ul>
+        </div>
+
+        <div style="text-align: center; margin-top: 30px; color: #555; font-size: 0.9em;">
+            <p>GitHub Pages URL: <span class="highlight" id="githubUrl"></span></p>
+        </div>
+    </div>
+
+    <script>
+        // Display current URL
+        document.getElementById('githubUrl').textContent = window.location.href;
+
+        function openWithServer() {
+            const ip = document.getElementById('serverIP').value.trim();
+            if (!ip) {
+                alert('Please enter your computer\'s IP address');
+                return;
+            }
+
+            // Validate IP format
+            const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+            if (!ipPattern.test(ip)) {
+                alert('Please enter a valid IP address (e.g., 192.168.1.100)');
+                return;
+            }
+
+            // Open display with server parameter
+            window.location.href = `index.html?server=${ip}:8080`;
+        }
+
+        function openStandalone() {
+            window.location.href = 'index.html';
+        }
+    </script>
+</body>
+
+</html>
