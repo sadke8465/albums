@@ -246,6 +246,11 @@
         Press 'C' to Calibrate
     </div>
 
+    <!-- Connection Status -->
+    <div id="connection-status"
+        style="position:fixed; bottom:20px; right:20px; width:10px; height:10px; border-radius:50%; background:red; z-index:9001; box-shadow:0 0 5px red;"
+        title="MQTT Disconnected"></div>
+
     <div id="calibration-overlay" class="hidden">
         <div class="calib-box">
             <h3>CRT CALIBRATION</h3>
@@ -283,6 +288,7 @@
         const MQTT_TOPIC_SAVE = 'sadke8465/crt/save';
         const MQTT_TOPIC_REQUEST = 'sadke8465/crt/request'; // Admin asking for current state
         const MQTT_TOPIC_STATE = 'sadke8465/crt/state'; // Display sending current state
+        const MQTT_TOPIC_COMMAND = 'sadke8465/crt/command'; // New Command Topic
 
         const CACHE = {
             id: null, // Artist + Track string
@@ -290,6 +296,7 @@
         };
 
         let zoomState = 0; // 0: Default, 1: TL, 2: TR, 3: BR, 4: BL
+        let autoLoop = true; // Flag to pause loop during manual override
 
         const els = {
             bgWrapper: document.getElementById('ambient-bg'),
@@ -302,7 +309,8 @@
                 document.getElementById('art-layer-0'),
                 document.getElementById('art-layer-1')
             ],
-            loading: document.getElementById('loading-screen')
+            loading: document.getElementById('loading-screen'),
+            status: document.getElementById('connection-status')
         };
 
         // State for Dual Buffering
@@ -350,9 +358,13 @@
 
         client.on('connect', () => {
             console.log("MQTT Connected");
+            els.status.style.background = '#0f0';
+            els.status.style.boxShadow = '0 0 5px #0f0';
+            els.status.title = 'MQTT Connected';
             client.subscribe(MQTT_TOPIC_UPDATE);
             client.subscribe(MQTT_TOPIC_SAVE);
             client.subscribe(MQTT_TOPIC_REQUEST);
+            client.subscribe(MQTT_TOPIC_COMMAND);
 
             // Broadcast initial state just in case admin is already open
             broadcastConfig();
@@ -361,6 +373,21 @@
         client.on('message', (topic, message) => {
             const msgStr = message.toString();
             console.log(`MQTT Info: ${topic}`, msgStr);
+
+            if (topic === MQTT_TOPIC_COMMAND) {
+                try {
+                    const cmd = JSON.parse(msgStr);
+                    if (cmd.action === 'set_state') {
+                        // FORCE JUMP TO STATE
+                        autoLoop = false; // Stop random switching
+                        zoomState = cmd.val;
+                        applyZoomState(zoomState);
+
+                        // Resume auto loop after 60 seconds of inactivity if desired, or just leave it manual
+                        // Let's leave it manual for now to allow calibration
+                    }
+                } catch (e) { console.error("MQTT Command Parse Error", e); }
+            }
 
             if (topic === MQTT_TOPIC_UPDATE) {
                 try {

@@ -158,6 +158,7 @@
         const TOPIC_SAVE = 'sadke8465/crt/save';
         const TOPIC_REQUEST = 'sadke8465/crt/request';
         const TOPIC_STATE = 'sadke8465/crt/state';
+        const TOPIC_COMMAND = 'sadke8465/crt/command';
 
         let client;
         let configs = {
@@ -212,6 +213,11 @@
         // UI Logic
         els.select.addEventListener('change', () => {
             updateInputsFromState();
+
+            // FORCE CRT TO SWITCH TO VALIDATE
+            const state = parseInt(els.select.value);
+            const cmd = { action: 'set_state', val: state };
+            client.publish(TOPIC_COMMAND, JSON.stringify(cmd));
         });
 
         function updateInputsFromState() {
