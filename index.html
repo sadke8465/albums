@@ -89,7 +89,10 @@
             /* Relative positioning for children absolute */
             position: relative;
             background: #000;
-            /* Fallback for transparency */
+
+            /* Apply Base Scale (Correction for CRT) */
+            /* Default transform is scale(1.33, 1) to widen image */
+            transform: scale(var(--base-scale-x, 1), var(--base-scale-y, 1));
         }
 
         /* Zoom States */
@@ -103,19 +106,19 @@
            BL: Move Right/Up (+x, -y)
         */
         .album-art-wrapper.zoom-tl {
-            transform: translate(var(--zoom-x), var(--zoom-y)) scale(1.8);
+            transform: translate(var(--zoom-x), var(--zoom-y)) scale(var(--zoom-scale-x), var(--zoom-scale-y));
         }
 
         .album-art-wrapper.zoom-tr {
-            transform: translate(calc(var(--zoom-x) * -1), var(--zoom-y)) scale(1.8);
+            transform: translate(calc(var(--zoom-x) * -1), var(--zoom-y)) scale(var(--zoom-scale-x), var(--zoom-scale-y));
         }
 
         .album-art-wrapper.zoom-br {
-            transform: translate(calc(var(--zoom-x) * -1), calc(var(--zoom-y) * -1)) scale(1.8);
+            transform: translate(calc(var(--zoom-x) * -1), calc(var(--zoom-y) * -1)) scale(var(--zoom-scale-x), var(--zoom-scale-y));
         }
 
         .album-art-wrapper.zoom-bl {
-            transform: translate(var(--zoom-x), calc(var(--zoom-y) * -1)) scale(1.8);
+            transform: translate(var(--zoom-x), calc(var(--zoom-y) * -1)) scale(var(--zoom-scale-x), var(--zoom-scale-y));
         }
 
         /* Remove radius when zoomed to look like full bleed image */
@@ -284,8 +287,14 @@
             // Set CSS Variables
             document.documentElement.style.setProperty('--zoom-x', `${dx}px`);
             document.documentElement.style.setProperty('--zoom-y', `${dy}px`);
-            document.documentElement.style.setProperty('--scale-x', scale * HORIZONTAL_SCALE);
-            document.documentElement.style.setProperty('--scale-y', scale);
+
+            // Zoom Scales
+            document.documentElement.style.setProperty('--zoom-scale-x', scale * HORIZONTAL_SCALE);
+            document.documentElement.style.setProperty('--zoom-scale-y', scale);
+
+            // Base Scales (for State 0)
+            document.documentElement.style.setProperty('--base-scale-x', 1 * HORIZONTAL_SCALE);
+            document.documentElement.style.setProperty('--base-scale-y', 1);
         }
 
         window.addEventListener('resize', updateZoomCalculations);
