@@ -313,28 +313,92 @@
         // --- Calibration Mode ---
         let calibrationMode = false;
 
-        // Default Config (V5.1 optimized)
+        // Default Config (V5.1 optimized) - Per View
         const DEFAULT_CONFIG = {
-            version: 2, // Increment to force reset if needed
-            hScale: 1.25, // Less aggressive stretch
-            nudgeX: 0,
-            nudgeY: 0,
-            sizeFactor: 0.95 // Fill more of the screen
+            version: 3,
+            views: {
+                default: { scaleX: 1.25, scaleY: 1, nudgeX: 0, nudgeY: 0, sizeFactor: 0.95 },
+                tl: { scaleX: 1.8, scaleY: 1.8, nudgeX: 0, nudgeY: 0, zoom: 1.8 },
+                tr: { scaleX: 1.8, scaleY: 1.8, nudgeX: 0, nudgeY: 0, zoom: 1.8 },
+                br: { scaleX: 1.8, scaleY: 1.8, nudgeX: 0, nudgeY: 0, zoom: 1.8 },
+                bl: { scaleX: 1.8, scaleY: 1.8, nudgeX: 0, nudgeY: 0, zoom: 1.8 }
+            }
         };
 
-        let config = { ...DEFAULT_CONFIG };
+        let config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
 
-        // Load Config
+        // WebSocket Connection for Live Updates
+        let ws = null;
+        const WS_URL = 'ws://localhost:8080';
+
+        function connectWebSocket() {
+            try {
+                ws = new WebSocket(WS_URL);
+
+                ws.onopen = () => {
+                    console.log('✓ Connected to control panel server');
+                };
+
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+
+                    if (data.type === 'init') {
+                        // Full config update
+                        config = data.config;
+                        updateZoomCalculations();
+                        updateOverlay();
+                        console.log('✓ Configuration loaded from server');
+                    }
+
+                    if (data.type === 'update') {
+                        // Single view update
+                        if (config.views[data.view]) {
+                            config.views[data.view] = {
+                                ...config.views[data.view],
+                                ...data.settings
+                            };
+                            updateZoomCalculations();
+                            updateOverlay();
+                        }
+                    }
+                };
+
+                ws.onclose = () => {
+                    console.log('✗ Disconnected from control panel');
+                    ws = null;
+                    // Try to reconnect after 5 seconds
+                    setTimeout(connectWebSocket, 5000);
+                };
+
+                ws.onerror = () => {
+                    console.log('⚠️ WebSocket connection failed, using local config');
+                };
+            } catch (error) {
+                console.log('⚠️ WebSocket not available, using local config');
+            }
+        }
+
+        // Helper to get current view config
+        function getCurrentViewConfig() {
+            const viewMap = ['default', 'tl', 'tr', 'br', 'bl'];
+            const viewKey = viewMap[zoomState];
+            return config.views[viewKey] || config.views.default;
+        }
+
+        // Load Config from localStorage (fallback)
         try {
             const saved = localStorage.getItem('crt_config');
             if (saved) {
                 const parsed = JSON.parse(saved);
                 // Only use saved if version matches, else reset to new defaults
                 if (parsed.version === DEFAULT_CONFIG.version) {
-                    config = { ...config, ...parsed };
+                    config = JSON.parse(JSON.stringify(parsed));
                 }
             }
         } catch (e) { }
+
+        // Try to connect to WebSocket server
+        connectWebSocket();
 
         const overlay = document.getElementById('calibration-overlay');
         const uiX = document.getElementById('val-x');
@@ -343,29 +407,41 @@
         const uiS = document.getElementById('val-s');
 
         function updateOverlay() {
-            uiX.innerText = config.nudgeX;
-            uiY.innerText = config.nudgeY;
-            uiW.innerText = config.hScale.toFixed(2);
-            uiS.innerText = config.sizeFactor.toFixed(2);
+            const viewConfig = getCurrentViewConfig();
+            uiX.innerText = viewConfig.nudgeX || 0;
+            uiY.innerText = viewConfig.nudgeY || 0;
+            uiW.innerText = (viewConfig.scaleX || 1).toFixed(2);
+            uiS.innerText = (viewConfig.sizeFactor || 0.95).toFixed(2);
         }
 
-        // CSS Variables for Zoom
+        // CSS Variables for Zoom - Now per-view
         function updateZoomCalculations() {
             const viewportW = window.innerWidth;
             const viewportH = window.innerHeight;
 
-            // Use Config Values
-            const HORIZONTAL_SCALE = config.hScale;
-            const NUDGE_X = config.nudgeX;
-            const NUDGE_Y = config.nudgeY;
+            // Get default view config for base settings
+            const defaultView = config.views.default;
+            const HORIZONTAL_SCALE = defaultView.scaleX || 1.25;
+            const NUDGE_X = defaultView.nudgeX || 0;
+            const NUDGE_Y = defaultView.nudgeY || 0;
+            const sizeFactor = defaultView.sizeFactor || 0.95;
+
+            // Get zoom view configs (TL, TR, BR, BL)
+            const tlView = config.views.tl;
+            const trView = config.views.tr;
+            const brView = config.views.br;
+            const blView = config.views.bl;
 
             // Element size defined by Size Factor
-            const size = Math.min(viewportW, viewportH) * config.sizeFactor;
+            const size = Math.min(viewportW, viewportH) * sizeFactor;
             const scale = 1.8;
 
-            // Calculate Scaled Dimensions
-            const scaledWidth = size * scale * HORIZONTAL_SCALE;
-            const scaledHeight = size * scale;
+            // Calculate Scaled Dimensions for zoomed views
+            const zoomScaleX = tlView.scaleX || 1.8; // Use TL as reference
+            const zoomScaleY = tlView.scaleY || 1.8;
+
+            const scaledWidth = size * zoomScaleX;
+            const scaledHeight = size * zoomScaleY;
 
             const halfScaledWidth = scaledWidth / 2;
             const halfScaledHeight = scaledHeight / 2;
@@ -373,25 +449,25 @@
             const halfViewportW = viewportW / 2;
             const halfViewportH = viewportH / 2;
 
-            // Calculate offsets to move corner to corner
-            const dx = halfScaledWidth - halfViewportW + NUDGE_X;
-            const dy = halfScaledHeight - halfViewportH + NUDGE_Y;
+            // Calculate base offsets (use TL nudge for now, can be per-view)
+            const dx = halfScaledWidth - halfViewportW + (tlView.nudgeX || 0);
+            const dy = halfScaledHeight - halfViewportH + (tlView.nudgeY || 0);
 
-            // Set CSS Variables
+            // Set CSS Variables for each zoom state
             document.documentElement.style.setProperty('--zoom-x', `${dx}px`);
             document.documentElement.style.setProperty('--zoom-y', `${dy}px`);
 
-            // Zoom Scales
-            document.documentElement.style.setProperty('--zoom-scale-x', scale * HORIZONTAL_SCALE);
-            document.documentElement.style.setProperty('--zoom-scale-y', scale);
+            // Zoom Scales - now from config
+            document.documentElement.style.setProperty('--zoom-scale-x', zoomScaleX);
+            document.documentElement.style.setProperty('--zoom-scale-y', zoomScaleY);
 
-            // Base Scales (for State 0)
-            document.documentElement.style.setProperty('--base-scale-x', 1 * HORIZONTAL_SCALE);
+            // Base Scales (for State 0 - Default)
+            document.documentElement.style.setProperty('--base-scale-x', HORIZONTAL_SCALE);
             document.documentElement.style.setProperty('--base-scale-y', 1);
 
             // Update Base Size
-            els.wrapper.style.width = `${config.sizeFactor * 100}vmin`;
-            els.wrapper.style.height = `${config.sizeFactor * 100}vmin`;
+            els.wrapper.style.width = `${sizeFactor * 100}vmin`;
+            els.wrapper.style.height = `${sizeFactor * 100}vmin`;
         }
 
         window.addEventListener('resize', updateZoomCalculations);
@@ -445,29 +521,47 @@
                 const STEP_SCALE = 0.01;
                 const STEP_SIZE = 0.01;
 
+                // Get current view config
+                const viewConfig = getCurrentViewConfig();
+
                 switch (e.key) {
                     case 'ArrowUp':
-                        if (shift) config.sizeFactor += STEP_SIZE;
-                        else config.nudgeY -= STEP_POS;
+                        if (shift && viewConfig.sizeFactor !== undefined) {
+                            viewConfig.sizeFactor += STEP_SIZE;
+                        } else {
+                            viewConfig.nudgeY = (viewConfig.nudgeY || 0) - STEP_POS;
+                        }
                         break;
                     case 'ArrowDown':
-                        if (shift) config.sizeFactor -= STEP_SIZE;
-                        else config.nudgeY += STEP_POS;
+                        if (shift && viewConfig.sizeFactor !== undefined) {
+                            viewConfig.sizeFactor -= STEP_SIZE;
+                        } else {
+                            viewConfig.nudgeY = (viewConfig.nudgeY || 0) + STEP_POS;
+                        }
                         break;
                     case 'ArrowLeft':
-                        if (shift) config.hScale -= STEP_SCALE;
-                        else config.nudgeX -= STEP_POS;
+                        if (shift) {
+                            viewConfig.scaleX = (viewConfig.scaleX || 1) - STEP_SCALE;
+                        } else {
+                            viewConfig.nudgeX = (viewConfig.nudgeX || 0) - STEP_POS;
+                        }
                         break;
                     case 'ArrowRight':
-                        if (shift) config.hScale += STEP_SCALE;
-                        else config.nudgeX += STEP_POS;
+                        if (shift) {
+                            viewConfig.scaleX = (viewConfig.scaleX || 1) + STEP_SCALE;
+                        } else {
+                            viewConfig.nudgeX = (viewConfig.nudgeX || 0) + STEP_POS;
+                        }
                         break;
                 }
 
                 // Limits
-                if (config.sizeFactor < 0.1) config.sizeFactor = 0.1;
-                if (config.sizeFactor > 1.0) config.sizeFactor = 1.0;
-                if (config.hScale < 0.5) config.hScale = 0.5;
+                if (viewConfig.sizeFactor !== undefined) {
+                    if (viewConfig.sizeFactor < 0.1) viewConfig.sizeFactor = 0.1;
+                    if (viewConfig.sizeFactor > 1.5) viewConfig.sizeFactor = 1.5;
+                }
+                if (viewConfig.scaleX < 0.5) viewConfig.scaleX = 0.5;
+                if (viewConfig.scaleX > 3.0) viewConfig.scaleX = 3.0;
 
                 updateZoomCalculations();
                 updateOverlay();

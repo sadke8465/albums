@@ -1,0 +1,20 @@
+{
+    "name": "crt-album-display",
+    "version": "1.0.0",
+    "description": "Live CRT Album Display with Real-time Control Panel",
+    "main": "server.js",
+    "scripts": {
+        "start": "node server.js"
+    },
+    "keywords": [
+        "websocket",
+        "crt",
+        "display",
+        "control"
+    ],
+    "author": "",
+    "license": "MIT",
+    "dependencies": {
+        "ws": "^8.14.2"
+    }
+}
