@@ -257,23 +257,35 @@
             const viewportW = window.innerWidth;
             const viewportH = window.innerHeight;
 
+            // Configuration for CRT Correction
+            const HORIZONTAL_SCALE = 1.33; // Stretch width to correct 4:3 squeeze
+            const NUDGE_X = 0; // Manual X offset (px)
+            const NUDGE_Y = 0; // Manual Y offset (px)
+
             // Element size is 85vmin.
             const size = Math.min(viewportW, viewportH) * 0.85;
             const scale = 1.8;
 
-            const scaledSize = size * scale;
-            const halfScaledSize = scaledSize / 2;
+            // Calculate Scaled Dimensions
+            // We apply Horizontal Scale to Width ONLY
+            const scaledWidth = size * scale * HORIZONTAL_SCALE;
+            const scaledHeight = size * scale;
+
+            const halfScaledWidth = scaledWidth / 2;
+            const halfScaledHeight = scaledHeight / 2;
 
             const halfViewportW = viewportW / 2;
             const halfViewportH = viewportH / 2;
 
             // Calculate offsets to move corner to corner
-            // dx to align Left Edge to Left Edge: halfScaledSize - halfViewportW
-            const dx = halfScaledSize - halfViewportW;
-            const dy = halfScaledSize - halfViewportH;
+            const dx = halfScaledWidth - halfViewportW + NUDGE_X;
+            const dy = halfScaledHeight - halfViewportH + NUDGE_Y;
 
+            // Set CSS Variables
             document.documentElement.style.setProperty('--zoom-x', `${dx}px`);
             document.documentElement.style.setProperty('--zoom-y', `${dy}px`);
+            document.documentElement.style.setProperty('--scale-x', scale * HORIZONTAL_SCALE);
+            document.documentElement.style.setProperty('--scale-y', scale);
         }
 
         window.addEventListener('resize', updateZoomCalculations);
